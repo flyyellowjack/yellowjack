@@ -1,0 +1,18 @@
+graph LR
+    dev["Developer / CI Runner<br/>(runs npm install)"]
+    fw["Firewall / Proxy Service<br/>(stateless, multithreaded, containerized)"]
+    sc["OpenSSF Scorecard<br/>(decision-maker)"]
+    gh["Source Repo<br/>(GitHub, etc.)"]
+    npm["npm Registry<br/>(public, upstream)"]
+
+    dev -->|"1. request package"| fw
+    fw -->|"2. look up source repo<br/>from npm metadata"| npm
+    fw -->|"3. run scorecard<br/>against repo"| sc
+    sc -->|"reads repo"| gh
+    sc -->|"4. score"| fw
+    fw -->|"5a. ALLOW: fetch package"| npm
+    fw -->|"5b. return package"| dev
+    fw -.->|"5c. BLOCK: error + reason<br/>(where protocol allows)"| dev
+
+    config["Config<br/>(injected at runtime)"]
+    config -.->|"upstream URL,<br/>score threshold"| fw

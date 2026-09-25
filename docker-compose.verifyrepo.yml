@@ -1,0 +1,131 @@
+# E2E override for the LOCAL-MODE borrow-a-score cross-check (D39). Layer on top of
+# the base compose AND the async-local override, so it inherits local mode plus the
+# shortened scan timeouts:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml \
+#     -f docker-compose.verifyrepo.yml up -d --build \
+#     fakeupstream postgres approval scheduler firewall firewall-pypi firewall-maven
+#
+# What it adds beyond docker-compose.e2e.yml:
+#   - fakeupstream: a static file server standing in for the registry, serving
+#     PUBLISHER-CONTROLLED metadata that LIES about its source repo. That is the half
+#     of the attack an attacker actually controls; deps.dev stays REAL (live
+#     api.deps.dev), which is what makes this a test of the cross-check rather than of
+#     a mock. See e2e/fakeupstream/README.md.
+#   - firewall-pypi / firewall-maven: the same image with FW_ECOSYSTEM flipped, so the
+#     leg can be run with a real pip and a real mvn. The base compose only defines npm
+#     and oci firewalls.
+#
+# Driver: e2e/verify_repo_local.sh
+services:
+  fakeupstream:
+    image: python:3.12-alpine@sha256:b64631e04e4920160c50fbe8d8df828f7f35f06f425cb44aa09bca53e708a35a
+    # Read-only mount of the crafted tree; no build step, no new dependency.
+    command: ["python", "-m", "http.server", "8000", "--directory", "/srv"]
+    volumes:
+      - ./e2e/fakeupstream:/srv:ro
+    # Published so the driver can sanity-check from the host that the crafted lie is
+    # actually being served (otherwise a "blocked" result could be a false positive).
+    ports:
+      - "8000:8000"
+
+  # Maven needs an OVERLAY upstream rather than a bare static tree: the settings.xml
+  # mirror must be <mirrorOf>*</mirrorOf>, which also routes maven's own plugin
+  # resolution through the firewall, and a static-only upstream makes `mvn` fail with
+  # "No plugin found for prefix 'dependency'" before it ever reaches the artifact under
+  # test. This serves the crafted POM and falls through to real Maven Central for
+  # everything else. See e2e/fakeupstream-maven/nginx.conf.
+  fakeupstream-maven:
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    volumes:
+      - ./e2e/fakeupstream-maven/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./e2e/fakeupstream:/srv:ro
+
+  # npm firewall: local mode (from docker-compose.e2e.yml) + the lying upstream.
+  firewall:
+    environment:
+      FW_UPSTREAM: "http://fakeupstream:8000"
+      FW_VERIFY_REPO: "true"
+    depends_on:
+      - fakeupstream
+      - approval
+      - scheduler
+
+  firewall-pypi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "pypi"
+      FW_UPSTREAM: "http://fakeupstream:8000"
+      FW_SCORECARD_MODE: "local"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "block"
+      FW_VERIFY_REPO: "true"
+      FW_APPROVAL_URL: "http://approval:8090"
+      FW_SCANNER_URL: "http://scheduler:8096"
+    depends_on:
+      - fakeupstream
+      - approval
+      - scheduler
+    ports:
+      # Deliberately in the 818x block: 8081/8082 are commonly taken on a dev box (the
+      # local Artifactory test rig publishes 8081-8082), and a port clash there
+      # fails `compose up` with a message that has nothing to do with this test.
+      - "8182:8080"
+
+  firewall-maven:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "maven"
+      FW_UPSTREAM: "http://fakeupstream-maven:8000"
+      # The stand-in serves files dated by checkout time, so the default 14-day cooldown
+      # (D335) would refuse guava as too new before the borrow check ran. Leg E measures
+      # the borrow check; the cooldown is proven by its own legs.
+      FW_MIN_RELEASE_AGE_DAYS: "0"
+      FW_SCORECARD_MODE: "local"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "block"
+      FW_VERIFY_REPO: "true"
+      FW_APPROVAL_URL: "http://approval:8090"
+      FW_SCANNER_URL: "http://scheduler:8096"
+    depends_on:
+      - fakeupstream
+      - approval
+      - scheduler
+    ports:
+      - "8183:8080"
+
+  # OCI firewall in local mode against the REAL registry. deps.dev has no package index
+  # for OCI, so a self-declared repo can never be cross-checked; under the closed default
+  # this service runs with (no FW_UNVERIFIED_POLICY set), leg F asserts that such an image
+  # is REFUSED as unverified and no scan is launched (#33, D48) — it used to assert the
+  # degrade-open behaviour that ruling reversed.
+  #
+  # A SEPARATE service rather than an override of the base `firewall-oci`: compose
+  # MERGES the `ports` sequence across files instead of replacing it, so overriding the
+  # base service would keep its published 8081 and clash on a box where something else
+  # already holds that port. A distinct name sidesteps that entirely.
+  firewall-oci-verify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "oci"
+      FW_UPSTREAM: "https://registry-1.docker.io"
+      FW_SCORECARD_MODE: "local"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "block"
+      FW_VERIFY_REPO: "true"
+      FW_APPROVAL_URL: "http://approval:8090"
+      FW_SCANNER_URL: "http://scheduler:8096"
+    depends_on:
+      - approval
+      - scheduler
+    ports:
+      - "8184:8080"

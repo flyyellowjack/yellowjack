@@ -1,0 +1,32 @@
+{{- if and .Values.networkPolicy.enabled .Values.approval.enabled }}
+---
+# The approval service has no authentication of its own, and its mutating endpoints are
+# the ones the console posts approvals to. On a host install the compose file keeps it on
+# loopback; the cluster equivalent is: only the gates and the console may reach it.
+# Requires a CNI that enforces NetworkPolicy. Where none does this is inert, not harmful.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "yellowjack.approval.name" . }}
+  labels:
+    {{- include "yellowjack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: approval
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "yellowjack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: approval
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "yellowjack.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: gate
+        - podSelector:
+            matchLabels:
+              {{- include "yellowjack.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: console
+      ports:
+        - port: 8090
+{{- end }}

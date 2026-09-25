@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Stopped</title>
+  {{ template "head" }}
+  <style>
+    .tabs .n { font-weight: 500; opacity: .8; margin-left: 4px; }
+    .list { overflow: hidden; }
+    .stop { display: grid; grid-template-columns: 160px minmax(0, 1fr) auto; align-items: center; gap: 16px;
+            padding: 14px 22px; border-bottom: 1px solid var(--line-soft); color: var(--ink); text-decoration: none; }
+    .stop:last-child { border-bottom: none; }
+    .stop:hover { background: var(--surface-2); color: var(--ink); }
+    .stop .when { font-size: 12px; color: var(--muted-2); }
+    .stop .body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .stop .name { font-family: var(--mono); font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+    .stop .reason { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @media (max-width: 800px) { .stop { grid-template-columns: 1fr; gap: 6px; } }
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Stopped</h1>
+      <p class="sub">What the gates refused, newest first. Open one to see why, and what to do instead.</p>
+    </div>
+    <div class="aside"><a href="/audit?action=block">Full history in the audit log</a></div>
+  </header>
+
+  <nav class="tabs" aria-label="Filter by kind of refusal">
+    {{ range .Tabs }}<a href="{{ .Href }}"{{ if .Active }} class="active" aria-current="page"{{ end }}>{{ .Label }}<span class="n">· {{ .Count }}</span></a>{{ end }}
+  </nav>
+
+  {{ if .Rows }}
+  <section class="card list" aria-label="Refusals">
+    {{ range .Rows }}
+    <a class="stop" href="{{ .Href }}">
+      <span class="when">{{ .When }} UTC{{ if .Ecosystem }} · {{ .Ecosystem }}{{ end }}</span>
+      <span class="body"><span class="name">{{ .Package }}</span>{{ if .Reason }}<span class="reason">{{ .Reason }}</span>{{ end }}</span>
+      <span class="badge {{ .Class }}">{{ .Label }}{{ if .Served }} · served (report mode){{ end }}</span>
+    </a>
+    {{ end }}
+  </section>
+  {{ else }}
+  <p class="empty">Nothing {{ if .Group }}of this kind {{ end }}has been stopped in the recent audit log.</p>
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

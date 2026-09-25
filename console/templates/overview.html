@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Overview</title>
+  {{ template "head" }}
+  <style>
+    .search { display: flex; align-items: center; gap: 10px; width: 360px; max-width: 100%; height: 44px;
+              padding: 0 14px; background: var(--surface); border: 1px solid var(--line);
+              border-radius: 10px; }
+    .search input { flex-grow: 1; border: none; outline: none; padding: 0; background: transparent; }
+    .search svg { flex-shrink: 0; }
+    .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+    .tile { display: flex; flex-direction: column; gap: 8px; padding: 20px; background: var(--surface);
+            border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); text-decoration: none; }
+    a.tile:hover { border-color: var(--line-strong); color: var(--ink); }
+    .tile .k { font-size: 13px; font-weight: 600; color: var(--muted); }
+    .tile .v { font-size: 34px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1;
+               font-variant-numeric: tabular-nums; }
+    .tile .s { font-size: 13px; color: var(--muted); }
+    .v.waiting { color: var(--warn); }
+    .v.stopped { color: var(--danger); }
+    .v.ok { color: var(--ok); }
+    .v.unknown { color: var(--muted); font-size: 22px; padding: 8px 0 4px; }
+    .split { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+    .split > .wide { grid-column: span 3; }
+    .split > .narrow { grid-column: span 2; }
+    .row { display: flex; align-items: center; gap: 16px; padding: 16px 22px; border-bottom: 1px solid var(--line-soft); }
+    .row:last-child { border-bottom: none; }
+    .row .eco { width: 56px; text-align: center; flex-shrink: 0; }
+    .row .body { display: flex; flex-direction: column; gap: 4px; flex-grow: 1; min-width: 0; }
+    .row .name { font-family: var(--mono); font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+    .row .meta { font-size: 13px; color: var(--muted); }
+    .row .meta .over { color: var(--danger); font-weight: 600; }
+    .stop { display: flex; flex-direction: column; gap: 6px; padding: 14px 22px; border-bottom: 1px solid var(--line-soft);
+            color: var(--ink); text-decoration: none; }
+    .stop:last-child { border-bottom: none; }
+    .stop:hover { background: var(--surface-2); color: var(--ink); }
+    .stop .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .stop .when { font-size: 12px; color: var(--muted-2); }
+    .stop .name { font-family: var(--mono); font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+    .card .none { padding: 22px; color: var(--muted); font-size: 14px; }
+    .strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .strip > div { display: flex; flex-direction: column; gap: 4px; padding: 16px 22px; border-right: 1px solid var(--line-soft); min-width: 0; }
+    .strip > div:last-child { border-right: none; }
+    .strip .k { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .strip .v { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    @media (max-width: 1100px) {
+      .tiles, .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .split { grid-template-columns: 1fr; }
+      .split > .wide, .split > .narrow { grid-column: auto; }
+    }
+    @media (max-width: 600px) { .tiles, .strip { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Overview</h1>
+      <p class="sub">Every package pulled through your gates, and what needs you.</p>
+    </div>
+    <form class="search" method="get" action="/lookup" role="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--muted)"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+      <input type="search" name="package" placeholder="Look up a package, e.g. lodash" aria-label="Look up a package">
+    </form>
+  </header>
+
+  <section class="tiles" aria-label="The last 24 hours at a glance">
+    <a class="tile" href="/decisions">
+      <span class="k">Waiting on you</span>
+      {{ if .QueueErr }}<span class="v unknown">Unknown</span><span class="s">The queue could not be read.</span>
+      {{ else }}<span class="v{{ if .Waiting }} waiting{{ end }}">{{ .Waiting }}</span>
+      <span class="s">{{ if .OldestWait }}Oldest waiting {{ .OldestWait }}{{ if .OverTarget }} — past the one-day target{{ end }}{{ else if .Waiting }}Wait unknown{{ else }}Nothing is waiting{{ end }}</span>{{ end }}
+    </a>
+    <a class="tile" href="/stopped">
+      <span class="k">Stopped, last 24 hours</span>
+      {{ if .SummaryErr }}<span class="v unknown">Unknown</span><span class="s">The audit log could not be read.</span>
+      {{ else }}<span class="v{{ if .Stopped }} stopped{{ end }}">{{ count .Stopped }}</span>
+      <span class="s">{{ if .StoppedBy }}{{ .StoppedBy }}{{ else }}Nothing was refused{{ end }}{{ if .Served }} · {{ .Served }} more logged and served (report mode){{ end }}</span>{{ end }}
+    </a>
+    <a class="tile" href="/audit?action=allow">
+      <span class="k">Allowed, last 24 hours</span>
+      {{ if .SummaryErr }}<span class="v unknown">Unknown</span><span class="s">The audit log could not be read.</span>
+      {{ else }}<span class="v">{{ count .Allowed }}</span>
+      <span class="s">{{ if .Sources }}From {{ .Sources }} host{{ if ne .Sources 1 }}s{{ end }}{{ else }}No source hosts observed{{ end }}</span>{{ end }}
+    </a>
+    <a class="tile" href="/policy">
+      <span class="k">Known-malware list</span>
+      <span class="v {{ if eq .FeedLevel "ok" }}ok{{ else }}unknown{{ end }}">{{ .FeedValue }}</span>
+      <span class="s">{{ .FeedSub }}</span>
+    </a>
+  </section>
+
+  <div class="split">
+    <section class="card wide" aria-labelledby="dq">
+      <div class="card-head"><h2 id="dq">Needs your decision</h2><a href="/decisions">Open all decisions</a></div>
+      {{ if .QueueErr }}<p class="none">The approval queue could not be read.</p>
+      {{ else if .Pending }}
+        {{ range .Pending }}
+        <div class="row">
+          <span class="eco"{{ if not .Ecosystem }} style="visibility:hidden"{{ end }}>{{ if .Ecosystem }}{{ .Ecosystem }}{{ else }}npm{{ end }}</span>
+          <div class="body">
+            <span class="name">{{ .Package }}</span>
+            <span class="meta">{{ if .Label }}{{ .Label }} · {{ end }}{{ if .Detail }}{{ .Detail }}{{ end }}{{ if .Waiting }} · <span{{ if .OverTarget }} class="over"{{ end }}>waiting {{ .Waiting }}</span>{{ end }}</span>
+          </div>
+          <a class="btn" href="{{ .Href }}">Review</a>
+        </div>
+        {{ end }}
+      {{ else }}<p class="none">Nothing is waiting on a person. Packages the gate cannot decide on its own land here.</p>{{ end }}
+    </section>
+
+    <section class="card narrow" aria-labelledby="rs">
+      <div class="card-head"><h2 id="rs">Recently stopped</h2><a href="/stopped">See all</a></div>
+      {{ if .RecentErr }}<p class="none">The audit log could not be read.</p>
+      {{ else if .Recent }}
+        {{ range .Recent }}
+        <a class="stop" href="{{ .Href }}">
+          <div class="top"><span class="when">{{ .When }} UTC · {{ .Ecosystem }}</span><span class="badge {{ .Class }}">{{ .Label }}</span></div>
+          <span class="name">{{ .Package }}</span>
+          {{ if .Served }}<span class="when">Logged, then served: this gate is in report mode.</span>{{ end }}
+        </a>
+        {{ end }}
+      {{ else }}<p class="none">Nothing has been stopped yet.</p>{{ end }}
+    </section>
+  </div>
+
+  <section class="card strip" aria-label="System state">
+    {{ range .System }}<div><span class="k">{{ .Label }}</span><span class="v"{{ if .Title }} title="{{ .Title }}"{{ end }}>{{ .Value }}</span></div>{{ end }}
+  </section>
+</main>
+</div>
+</body>
+</html>

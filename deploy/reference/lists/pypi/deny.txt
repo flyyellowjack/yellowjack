@@ -1,0 +1,3 @@
+# Packages refused outright, every version. One name per line.
+# PEP 503 names: case and -/_/. differences do not matter.
+requests

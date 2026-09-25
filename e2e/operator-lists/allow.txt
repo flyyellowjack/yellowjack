@@ -1,0 +1,13 @@
+# e2e fixture: the OPERATOR's allow list (D193, issue #58, async_local.sh leg 21).
+#
+# body-parser is chosen deliberately. Its source repo is github.com/expressjs/body-parser,
+# which matches the fake scorecard's FAKE_UNSCORABLE_SUBSTR ("expressjs/"), so this rig
+# CANNOT score it -- and with FW_UNSCORABLE_POLICY=block it is refused by default. That
+# makes leg 21's allow half decisive in the right direction: if the allow list were not
+# wired at all, this package would be BLOCKED and the leg fails. A fixture that was
+# already being served would make the assertion vacuous.
+#
+# NOT express, even though it is the rig's canonical blocked package: leg 19 approves
+# express through the console, so by the time leg 21 runs it is allowed on a human
+# ruling and allow-listing it would prove nothing.
+body-parser

@@ -1,0 +1,170 @@
+{{- include "yellowjack.validate" . -}}
+{{- $root := . -}}
+{{- range .Values.gates }}
+{{- $gate := . -}}
+{{- $name := include "yellowjack.gate.name" (dict "root" $root "gate" $gate) -}}
+{{/* service and lists are OPTIONAL blocks. Dereferencing a missing one is a nil-pointer
+     render error with no hint (found by e2e/helm_list_drill.sh, whose values file omitted
+     service), so both default to an empty dict first. */}}
+{{- $svc := default dict $gate.service -}}
+{{- $lists := default dict $gate.lists -}}
+{{- $port := int (default 8080 $svc.port) -}}
+{{- $publicURL := default (printf "http://%s:%d" $name $port) $gate.publicURL -}}
+---
+# One ConfigMap per gate, mounted as a DIRECTORY. A ConfigMap volume updates in place
+# (atomic symlink swap), so a `helm upgrade` that edits a list reaches the running gate
+# without a restart -- the file-mount inode trap the compose file documents (!185) does
+# not apply here. It is NOT "inside the gate's 5-second reload": the kubelet projects the
+# change on its own sync (1 min by default), and only then does the gate's lookup-
+# triggered reload see it. Measured on kind with one pod per node
+# (e2e/helm_list_drill.sh, #131): pods enforced the edit 50-76 s after `helm upgrade`,
+# and pods on different nodes disagreed for 10-20 s. Never mount these through subPath:
+# a subPath mount never receives a ConfigMap update, and the drill's control pod shows it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-lists
+  labels:
+    {{- include "yellowjack.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: gate
+    yellowjack.io/gate: {{ $gate.name | quote }}
+data:
+  allow.txt: {{ default "" $lists.allow | quote }}
+  deny.txt: {{ default "" $lists.deny | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yellowjack.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: gate
+    yellowjack.io/gate: {{ $gate.name | quote }}
+spec:
+  replicas: {{ default 2 $gate.replicas }}
+  # Replicas share NOTHING (no database, no volume, no coordination -- e2e/ha_drill.sh
+  # legs 1-6), so a rolling update with one extra pod and none unavailable is a
+  # zero-failed-request rollover, which is D133's acceptance criterion.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "yellowjack.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: gate
+      yellowjack.io/gate: {{ $gate.name | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "yellowjack.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: gate
+        yellowjack.io/gate: {{ $gate.name | quote }}
+      annotations:
+        # A list edit changes the ConfigMap in place, but a changed FW_* value only
+        # reaches the pod on a restart; hashing the rendered env into the pod template
+        # makes `helm upgrade` roll the gates exactly when something they read changed.
+        checksum/env: {{ $gate.env | toYaml | sha256sum }}
+    spec:
+      {{- with $root.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: firewall
+          image: {{ include "yellowjack.image" (dict "global" $root.Values.global "image" $root.Values.images.firewall) | quote }}
+          imagePullPolicy: {{ $root.Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $root.Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: FW_LISTEN_ADDR
+              value: ":8080"
+            - name: FW_ECOSYSTEM
+              value: {{ $gate.ecosystem | quote }}
+            - name: FW_UPSTREAM
+              value: {{ $gate.upstream | quote }}
+            - name: FW_PUBLIC_URL
+              value: {{ $publicURL | quote }}
+            - name: FW_ALLOW_LIST
+              value: /lists/allow.txt
+            - name: FW_DENY_LIST
+              value: /lists/deny.txt
+            {{- if $root.Values.approval.enabled }}
+            - name: FW_APPROVAL_URL
+              value: {{ include "yellowjack.approval.url" $root | quote }}
+            {{- end }}
+            {{- range $k, $v := $gate.env }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: lists
+              mountPath: /lists
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          # Readiness is NOT liveness (D165): /readyz answers 503 while the policy in force
+          # is not the file on the mount (a list that failed to re-read), so a rolling update
+          # never routes to a gate that has not loaded the config it was deployed with, and
+          # a gate on a broken list leaves rotation while it enforces the last good one.
+          # /healthz stays local process health only (D163).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml (default dict $gate.resources) | nindent 12 }}
+      volumes:
+        - name: lists
+          configMap:
+            name: {{ $name }}-lists
+      {{- with $root.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yellowjack.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: gate
+    yellowjack.io/gate: {{ $gate.name | quote }}
+spec:
+  type: {{ default "ClusterIP" $svc.type }}
+  ports:
+    - name: http
+      port: {{ $port }}
+      targetPort: http
+  selector:
+    {{- include "yellowjack.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: gate
+    yellowjack.io/gate: {{ $gate.name | quote }}
+{{/*
+No left-trim on this `end`, deliberately. `{{- end }}` eats the newline after the
+Service's last line, and the NEXT gate's leading `---` lands on it as
+`yellowjack.io/gate: "npm"---`, which is a parse error. A single-gate render never
+shows it, which is why the two-gate override render is part of the chart check.
+*/}}
+{{ end }}

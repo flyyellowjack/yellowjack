@@ -1,0 +1,38 @@
+# The console demo (docs/DEMO.md), layered on docker-compose.yml. Drive it with
+# `sh scripts/demo.sh up`, which creates ./.demo first; this file only mounts it.
+#
+# What it adds to the default stack, and nothing else:
+#   - the npm gate reads a known-malware feed and the operator's allow/block lists
+#     from ./.demo, so every kind of refusal the console explains can happen;
+#   - the console is the opt-in console-git image (D199) pointed at a git working tree
+#     of those same lists, so they can be edited from the console during the demo.
+#
+# Credentials are never written here: scripts/demo.sh generates them into
+# ./.demo/credentials and passes them through the environment, as the base file expects.
+services:
+  firewall:
+    environment:
+      FW_MALWARE_LIST: "/etc/yellowjack/feed/malware.ndjson"
+      FW_ALLOW_LIST: "/etc/yellowjack/lists/allow.txt"
+      FW_DENY_LIST: "/etc/yellowjack/lists/deny.txt"
+    volumes:
+      # Directories, not files: the console writes the lists by temp-file-and-rename,
+      # which a file bind mount would never show the gate.
+      - ./.demo/lists:/etc/yellowjack/lists:ro
+      - ./.demo/feed:/etc/yellowjack/feed:ro
+
+  console:
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+      target: console-git
+    environment:
+      CONSOLE_LIST_REPO: "/srv/lists"
+      CONSOLE_LIST_ALLOW_FILE: "allow.txt"
+      CONSOLE_LIST_DENY_FILE: "deny.txt"
+      CONSOLE_LIST_ECOSYSTEM: "npm"
+      CONSOLE_LIST_REMOTE: "origin"
+    volumes:
+      - ./.demo/lists:/srv/lists
+      - ./.demo/lists-remote:/srv/lists-remote
+      - ./.demo/gitconfig:/home/nonroot/.gitconfig:ro

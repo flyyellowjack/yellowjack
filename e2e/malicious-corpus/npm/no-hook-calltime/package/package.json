@@ -1,0 +1,1 @@
+{ "name": "yj-no-hook-calltime", "version": "1.0.0", "description": "SYNTHETIC fixture: NO lifecycle hook; payload shape runs at call time. Inert.", "main": "index.js", "license": "MIT" }

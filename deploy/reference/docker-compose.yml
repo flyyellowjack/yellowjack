@@ -1,0 +1,304 @@
+# Yellow Jack — REFERENCE DEPLOYMENT
+#
+#   docker compose -f deploy/reference/docker-compose.yml up --build -d
+#
+# Walkthrough, with the expected output of every command: docs/REFERENCE_DEPLOYMENT.md
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT THIS IS, AND WHAT IT IS NOT
+#
+# It is an EXAMPLE an evaluator runs to watch the product work end to end: point a
+# real npm client at it, watch a package be refused with a legible reason, watch a
+# different one install, then read both decisions in the console. It exists because
+# a prospect who does not already own Artifactory had no way to see any of that.
+#
+# It is NOT the file to deploy to production unmodified, and it is NOT a shipped
+# component. The registry below is a STAND-IN for the customer's own registry, which
+# in a real deployment they already run and already patch (QR1: ship a reference
+# deployment that INCLUDES a registry, never a registry AS our component — otherwise
+# we inherit someone else's CVE stream and 2am support burden).
+#
+# One thing you must do before it starts, and one you would change for real use:
+# generate the local database password (below), and point FW_UPSTREAM at your own
+# registry. The password is NOT a literal in this file — see the postgres service.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THE TOPOLOGY IS THE POINT (D177)
+#
+#   developer ──▶ Yellow Jack ──▶ the customer's registry ──▶ the public registry
+#
+# THIS EXAMPLE puts the gate IN FRONT of the customer's registry. That is the whole
+# reason the registry below publishes NO host port: there is no route to it that
+# does not pass the gate. From in front, every pull is judged -- including one the
+# registry would serve from its own cache -- and a package the customer already
+# cached can still be withdrawn (proved by e2e/registry_front.sh leg 9).
+#
+# The other position is BEHIND the registry, as its upstream remote (D290):
+#
+#   developer ──▶ the customer's registry ──▶ Yellow Jack ──▶ the public registry
+#
+# That stops INGEST: a refused package never enters the registry at all (leg 10),
+# and nothing on a developer machine changes, because the only client is the
+# registry. What it cannot do is see a cache hit, so it cannot withdraw a package
+# the registry already holds (leg 9's control). The two positions stop different
+# events; pick by the event you need stopped, or run both.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHICH SIGNAL IS DECIDING HERE
+#
+# The operator lists and the release-age floor — both local, both needing no
+# account, no scanner and no network call of ours. FW_SCORECARD_MODE is "off":
+# scoring is disabled outright, so no repo is resolved and no scoring call leaves
+# the deployment. Turning the scanner on is one line, and docs/SETUP.md has it.
+#
+# This used to read "stub" with a threshold of 0.0, because `off` did not exist and
+# that pairing was the only way to say "the scanner is not in this decision". It was
+# never the same statement: `stub` returns a FIXED 7.5 for every repository, so the
+# gate asserted a passing score it had never measured. D273 added `off` and made
+# `stub` report NOT READY — a development fixture should not be reachable in a
+# deployment anyone copies.
+
+services:
+  # ── The customer's registry (THEIR component, not ours) ────────────────────
+  #
+  # Verdaccio stands in for Nexus / Artifactory / CodeArtifact / a GitLab package
+  # registry. Anything that proxies an upstream and caches what it fetched works
+  # here unchanged — the mechanism is configuration, not code (D151).
+  #
+  # NO PUBLISHED PORT, deliberately. A developer cannot reach it except through the
+  # firewall, which is what "in front" means. Publishing it here would quietly
+  # reintroduce the bypass the topology exists to remove.
+  custreg:
+    # PINNED BY DIGEST (#22) like every other image in the tree: a tag is a mutable
+    # pointer, and an evaluator who runs this next month should get what we tested.
+    image: verdaccio/verdaccio:6@sha256:09b403888c8f73ba9336d7fb3464622f64ea905a64bc46a87c847387c536d4dd
+    volumes:
+      - ./verdaccio.yaml:/verdaccio/conf/config.yaml:ro
+
+  # ── Yellow Jack, in front ──────────────────────────────────────────────────
+  firewall:
+    # One image, built once, shared by the three gates below (compose builds it for
+    # the first service and reuses it by name). The yellowjack- prefix is what tells
+    # scripts/pinned-images.sh this is built here, not pulled, so it has no digest to pin.
+    image: yellowjack-reference-firewall
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "npm"
+
+      # ⚠️ CHANGE THIS for a real deployment: the address of YOUR registry.
+      FW_UPSTREAM: "http://custreg:4873"
+
+      # THE ADDRESS YOUR DEVELOPERS REACH THE GATE AT — and the one setting in this
+      # file most likely to bite you, so read this before changing anything else.
+      #
+      # The gate mints artifact URLs from it, so it must be reachable FROM WHERE THE
+      # CLIENT RUNS, not from where the gate runs. The default suits a client on this
+      # laptop. A client in a container resolves "localhost" to ITSELF and fails with
+      # ECONNREFUSED on a URL that looks perfectly correct in the error message —
+      # measured, not predicted; it is what happened the first time this file was run
+      # with a containerised npm. For that case:
+      #
+      #   YJ_PUBLIC_URL=http://firewall:8080 docker compose -f … up -d
+      #
+      # Leaving it UNSET is the worse option and the gate warns about it: URLs would
+      # be minted from each request's Host header, so one dependency resolves
+      # differently per environment and that difference lands in lockfiles (#19, !129).
+      FW_PUBLIC_URL: "${YJ_PUBLIC_URL:-http://localhost:8080}"
+
+      # See "WHICH SIGNAL IS DECIDING HERE" above. Scoring is OFF: no repo is resolved
+      # and no score is requested, so the lists and the age floor decide. The threshold
+      # below is inert under `off` and is kept only so switching a scanner on is a
+      # one-line change rather than two.
+      FW_SCORECARD_MODE: "off"
+      FW_SCORE_THRESHOLD: "0.0"
+
+      # The two operator lists. Absolute paths, because a relative one would be
+      # resolved against whatever directory the process started in — which is how a
+      # neighbouring project's CVE-2025-64726 happened, so we refuse to guess.
+      FW_ALLOW_LIST: "/lists/allow.txt"
+      FW_DENY_LIST: "/lists/deny.txt"
+
+      # Refuse releases younger than this many days. 14 is the product default (D335);
+      # set YJ_MIN_RELEASE_AGE_DAYS=0 to turn it off. It holds back only versions
+      # younger than the window, so the walkthrough's packages still resolve.
+      FW_MIN_RELEASE_AGE_DAYS: "${YJ_MIN_RELEASE_AGE_DAYS:-14}"
+
+      # Every verdict recorded, nothing enforced — the honest way to put this in
+      # front of a real build system for the first time. Flip with
+      #   YJ_MODE=report docker compose -f deploy/reference/docker-compose.yml up -d
+      FW_MODE: "${YJ_MODE:-enforce}"
+
+      # The control plane, so decisions reach the console.
+      FW_APPROVAL_URL: "http://approval:8090"
+    volumes:
+      # ⚠️ The DIRECTORY is mounted, never the file. Editing a list writes a new
+      # inode, and a file bind mount pins the old one — the container would go on
+      # reading the old list forever, silently, and only on Linux (Docker Desktop
+      # resolves file mounts by path). Cost us a whole CI leg once; see !185.
+      #
+      # READ-ONLY, and that is not a compromise: the gate READS an injected list and
+      # never writes one (D103). Edits come from outside the container.
+      - ./lists/npm:/lists:ro
+    depends_on:
+      - custreg
+    ports:
+      # The product's front door — the one service a developer's client must reach,
+      # so this is the one published on all interfaces (scripts/exposed-ports.sh).
+      - "8080:8080"
+
+  # ── Control plane + GUI ────────────────────────────────────────────────────
+  #
+  # D192 makes the approval WORKFLOW an optional add-on. The console is not: it is
+  # the UI half of the trimmed core, and it reads its data through approval. So both
+  # are here, and the walkthrough uses them to show the decisions the gate made.
+  postgres:
+    image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    environment:
+      # NO CREDENTIAL LIVES IN THIS FILE (#22). It used to read a literal, with the same
+      # literal again in APPROVAL_DATABASE_URL below — one identical database password on
+      # every copy of a file whose whole purpose is to be copied. `!248` removed that from
+      # the shipped compose; this is the same treatment for the example, which needs it
+      # more, not less.
+      #
+      # Generate the local value once, into a git-ignored .env beside this file:
+      #   YJ_ENV_FILE=deploy/reference/.env sh scripts/gen-env.sh
+      #
+      # Interpolated, never repeated: two literals that must match is a rotation bug
+      # waiting to happen. The :? form means a missing value fails compose with the
+      # command to run, rather than starting on a shared secret.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?not set - run `YJ_ENV_FILE=deploy/reference/.env sh scripts/gen-env.sh` to generate it}
+      POSTGRES_DB: yellowjack
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d yellowjack"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  approval:
+    build:
+      context: ../..
+      dockerfile: approval/Dockerfile
+    environment:
+      APPROVAL_LISTEN_ADDR: ":8090"
+      APPROVAL_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/yellowjack?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # LOOPBACK ONLY. This plane takes no credential yet (#13 item 2), and its
+      # mutating endpoints are the ones the console posts approvals to. The listen
+      # address is the access control until that lands.
+      - "127.0.0.1:8090:8090"
+
+  console:
+    build:
+      context: ../..
+      dockerfile: console/Dockerfile
+    environment:
+      CONSOLE_LISTEN_ADDR: ":8085"
+      CONSOLE_APPROVAL_URL: "http://approval:8090"
+      # Set BOTH to enable the write path (approve/deny, list edits). Empty = the
+      # console runs read-only, which is the right default for an evaluation.
+      CONSOLE_AUTH_USER: "${CONSOLE_AUTH_USER:-}"
+      CONSOLE_AUTH_PASS: "${CONSOLE_AUTH_PASS:-}"
+    depends_on:
+      - approval
+    ports:
+      - "127.0.0.1:8085:8085"
+
+  # ── PyPI: the same topology, a second ecosystem ──────────────────────────────
+  #
+  # A Nexus/Artifactory "remote" PyPI repository is a caching proxy of the public
+  # /simple/ index, and that is what stands in for it here: nginx in front of
+  # pypi.org, caching what it fetches (nginx-pypi.conf). No host port, same reason as
+  # custreg above -- the only route to it is through the gate.
+  #
+  # Honest about where the BYTES go: this proxies the INDEX. Wheel links inside it
+  # still point at PyPI's CDN (files.pythonhosted.org), and the gate relays those
+  # through its own /_files/ path -- so artifact bytes are gated but do not pass
+  # through this stand-in. Point FW_FILES_UPSTREAM at your registry's file mirror if
+  # yours serves the bytes too.
+  custreg-pypi:
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    volumes:
+      - ./nginx-pypi.conf:/etc/nginx/conf.d/default.conf:ro
+
+  firewall-pypi:
+    image: yellowjack-reference-firewall
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "pypi"
+      FW_UPSTREAM: "http://custreg-pypi:8080"
+      # This gate mints its OWN /_files/ URLs, so it needs its OWN public address --
+      # the same rule as the npm gate's FW_PUBLIC_URL, on this gate's port.
+      FW_PUBLIC_URL: "${YJ_PYPI_PUBLIC_URL:-http://localhost:8081}"
+      FW_SCORECARD_MODE: "off"
+      FW_SCORE_THRESHOLD: "0.0"
+      FW_ALLOW_LIST: "/lists/allow.txt"
+      FW_DENY_LIST: "/lists/deny.txt"
+      FW_MIN_RELEASE_AGE_DAYS: "${YJ_MIN_RELEASE_AGE_DAYS:-14}"
+      FW_MODE: "${YJ_MODE:-enforce}"
+      FW_APPROVAL_URL: "http://approval:8090"
+    volumes:
+      - ./lists/pypi:/lists:ro
+    depends_on:
+      - custreg-pypi
+      - firewall
+    ports:
+      - "8081:8080"
+
+  # ── OCI / Docker: the same topology, a third ecosystem ───────────────────────
+  #
+  # The customer's container registry is a registry:2 PULL-THROUGH cache of Docker
+  # Hub -- the shape Harbor's and Nexus's Hub proxies take. Anonymous, public images
+  # only. No host port, as above. The gate talks to it in plain HTTP inside the
+  # compose network; the Bearer-token dance with Hub is registry:2's to perform.
+  custreg-oci:
+    image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    environment:
+      REGISTRY_PROXY_REMOTEURL: "https://registry-1.docker.io"
+
+  firewall-oci:
+    image: yellowjack-reference-firewall
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "oci"
+      FW_UPSTREAM: "http://custreg-oci:5000"
+      FW_SCORECARD_MODE: "off"
+      FW_SCORE_THRESHOLD: "0.0"
+      # An image with no source label is unscorable. The default refuses those; the
+      # walkthrough pulls alpine, which declares one, so the lists decide exactly as
+      # they do for npm and PyPI above (scoring is off here too).
+      FW_ALLOW_LIST: "/lists/allow.txt"
+      FW_DENY_LIST: "/lists/deny.txt"
+      # NO FW_MIN_RELEASE_AGE_DAYS HERE, and it is not an oversight. The release window
+      # needs a publication time the publisher does not control, and a container
+      # registry offers none: a manifest carries no Last-Modified, and the only date in
+      # the pull path is `created` in the image's own config, written by whoever built
+      # it -- 4 of 7 real images sampled report the 1970 epoch (#127, measured). The
+      # gate does not apply the window to OCI at all (whyOCIHasNoReleaseWindow), so the
+      # knob here would look armed and refuse nothing. referencedeploy_test.go pins
+      # the absence; when #127 lands a trustworthy time, that test is what changes.
+      FW_MODE: "${YJ_MODE:-enforce}"
+      FW_APPROVAL_URL: "http://approval:8090"
+    volumes:
+      - ./lists/oci:/lists:ro
+    depends_on:
+      - custreg-oci
+      - firewall
+    ports:
+      - "8082:8080"
+
+volumes:
+  pgdata:

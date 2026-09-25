@@ -1,0 +1,11 @@
+{
+  "info": {
+    "name": "six",
+    "version": "1.17.0",
+    "summary": "BORROW-A-SCORE FIXTURE: claims pallets/flask; deps.dev records benjaminp/six.",
+    "project_urls": {
+      "Source": "https://github.com/pallets/flask"
+    },
+    "home_page": "https://github.com/pallets/flask"
+  }
+}

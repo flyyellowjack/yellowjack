@@ -1,0 +1,161 @@
+# E2E override for the async-local-mode test (D18). Layer on top of the base:
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --build \
+#     postgres approval scheduler firewall
+#
+# It flips ONLY what the async e2e needs, leaving the base compose untouched:
+#   - npm firewall -> FW_SCORECARD_MODE=local, so scoring routes to the scheduler
+#     and the async cold-scan path (503 -> background scan -> L2) is exercised.
+#   - shorter scan timeouts so a tokenless scorecard run (which fails auth fast)
+#     resolves to "unscorable" quickly instead of sitting near the 240s default.
+#
+# See e2e/async_local.sh for the driver, and docs/E2E_TESTING.md for what this
+# proves (the async PIPELINE end-to-end; the allow-vs-block score compare is
+# unit-covered in decideByScore).
+services:
+  # The console, published so the RIG can reach it (#32 Phase D / D4b, leg 14).
+  #
+  # THE BASE COMPOSE BINDS THE CONSOLE TO 127.0.0.1 ON PURPOSE (D19: reachable from the
+  # developer's browser, NOT from the LAN), and it is the only service that does. That is
+  # correct and must not be weakened — but it makes the console unreachable from CI, where
+  # the rig talks to the stack through $E2E_HOST=docker (the dind service host) rather than
+  # loopback. Leg 14 passed on a laptop and failed in CI with a bare `000` connection
+  # refusal for exactly this reason.
+  #
+  # So publish a SECOND mapping on all interfaces, e2e-only, on a DIFFERENT host port.
+  # A different port matters: Compose's merge semantics for `ports` are not something to
+  # rely on — if the lists concatenate, two mappings for host 8085 would collide and the
+  # stack would fail to start. 18085 cannot collide with the base 127.0.0.1:8085 either
+  # way, so this override is correct whether Compose replaces the list or appends to it.
+  console:
+    ports:
+      - "18085:8085"
+
+  # A SECOND console, with overrides ENABLED (legs 16-19).
+  #
+  # WHY A SECOND INSTANCE RATHER THAN CREDENTIALS ON THE FIRST. The console above runs
+  # with no CONSOLE_AUTH_USER on purpose, and leg 15 asserts the queue page then says
+  # plainly that "no one is accountable" -- #50's protection against a blank decider
+  # field reading like a named reviewer. Enabling overrides on that instance would
+  # delete that assertion to gain this one.
+  #
+  # Both are real deployment postures: read-only (the safe default) and override-enabled
+  # (what an operator who works the queue actually runs). Running both means the rig
+  # covers the REFUSAL and the SUCCESS of the same write path, which is what stops leg 19
+  # from passing for the wrong reason.
+  #
+  # The credential below is a FIXTURE, not a secret: it is invented here, lives only in a
+  # throwaway compose stack, and grants nothing outside it -- the same standing as
+  # POSTGRES_PASSWORD in the base compose. The base compose still says "do not hardcode a
+  # secret here" and that still applies THERE, where the value would reach a real
+  # deployment.
+  console-auth:
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+    environment:
+      CONSOLE_LISTEN_ADDR: ":8085"
+      CONSOLE_APPROVAL_URL: "http://approval:8090"
+      CONSOLE_AUTH_USER: "e2e-operator"
+      CONSOLE_AUTH_PASS: "e2e-fixture-not-a-secret"
+    depends_on:
+      - approval
+    ports:
+      # All interfaces, like the console override above and for the same reason: under
+      # dind the rig reaches the stack through $E2E_HOST, not loopback. A different host
+      # port from both 8085 and 18085 so nothing can collide however Compose merges.
+      - "18086:8085"
+
+  # A THIRD console, signed in through OIDC (legs 24-27, #149). !330 shipped OIDC with
+  # unit tests only; these legs drive the real authorization-code round trip through a
+  # stub IdP and assert that a write made through it is attributed to the signed-in
+  # identity. No basic credential here ON PURPOSE: leg 24 proves an unauthenticated write
+  # is refused, and a shared credential would leave a second, unattributable way in --
+  # the #41 regression this instance exists to rule out.
+  console-oidc:
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+    environment:
+      CONSOLE_LISTEN_ADDR: ":8085"
+      CONSOLE_APPROVAL_URL: "http://approval:8090"
+      CONSOLE_OIDC_ISSUER: "http://oidcstub:9000"
+      CONSOLE_OIDC_CLIENT_ID: "yellowjack-console"
+      # A FIXTURE, not a secret -- same standing as CONSOLE_AUTH_PASS above.
+      CONSOLE_OIDC_CLIENT_SECRET: "e2e-fixture-not-a-secret"
+      # Must be the address the RIG's curl uses for this console, so the handshake cookie
+      # set at sign-in comes back on the callback. E2E_HOST is exported by async_local.sh.
+      # http, deliberately: the console only marks cookies Secure for an https redirect
+      # URL, which is what lets a plain-HTTP rig (and a developer on localhost) sign in.
+      CONSOLE_OIDC_REDIRECT_URL: "http://${E2E_HOST:-localhost}:18087/auth/callback"
+    depends_on:
+      approval:
+        condition: service_started
+      # HEALTHY, not started: a configured-but-unreachable IdP is fatal at console
+      # startup (!330), so the stub must be listening before this container starts.
+      oidcstub:
+        condition: service_healthy
+    ports:
+      - "18087:8085"
+
+  # The stub OpenID Provider console-oidc signs in against. Reached at oidcstub:9000 by
+  # the console (discovery, token endpoint) and at ${E2E_HOST}:19000 by the rig's curl
+  # playing the browser (/authorize, /_hits). Two addresses for one stub is what makes
+  # this work under dind; see e2e/oidcstub/idp.py for what the stub deliberately does
+  # NOT do and why that is the correct fixture for !330's design.
+  oidcstub:
+    image: yellowjack-oidcstub:e2e
+    environment:
+      IDP_ISSUER: "http://oidcstub:9000"
+      IDP_AUTHZ_BASE: "http://${E2E_HOST:-localhost}:19000"
+      IDP_CLIENT_ID: "yellowjack-console"
+      IDP_SUBJECT: "alice@example.test"
+    ports:
+      - "19000:9000"
+
+  # The SMTP sink for the alert-email leg (#32 Phase C / C4c). Not part of the base
+  # compose: it exists only so leg 12 can prove a real message left the approval service
+  # over a real SMTP conversation. See e2e/fakesmtp/README.md for why this is a committed
+  # stdlib fixture rather than a mail-catcher image, and for what it does NOT cover (TLS).
+  fakesmtp:
+    image: yellowjack-fakesmtp:e2e
+    ports:
+      - "1080:1080" # HTTP inspection only; the SMTP port stays on the compose network
+
+  approval:
+    environment:
+      # Point alerting at the sink. Both variables are required to enable email — setting
+      # only one is a startup error on purpose (an operator who half-configured alerting
+      # would otherwise believe they are covered).
+      APPROVAL_SMTP_HOST: "fakesmtp"
+      APPROVAL_SMTP_PORT: "1025"
+      APPROVAL_ALERT_TO: "ops@e2e.invalid"
+      APPROVAL_ALERT_FROM: "yellowjack@e2e.invalid"
+      # Sweep every 5s instead of the 1-minute default so the leg does not sit through a
+      # production interval. This is the alert-notifier analogue of the firewall's
+      # FW_FLOW_FLUSH_INTERVAL above.
+      APPROVAL_ALERT_SWEEP_INTERVAL: "5s"
+
+  firewall:
+    environment:
+      FW_SCORECARD_MODE: "local"
+      # The metadata lookup still needs to resolve a repo so we reach the scan
+      # path; block on unscorable (fail-closed) so the second pull is decisive.
+      FW_UNSCORABLE_POLICY: "block"
+      # Capacity telemetry (#32 Phase C): flush every 5s instead of the 1-minute
+      # default, so the e2e leg that proves counters reach Postgres does not have to
+      # sit through a full production bucket. The interval is ALSO the bucket width,
+      # so this makes the rig's buckets 5s wide — which is fine, since the assertion
+      # is "the numbers arrived", not "the bucket is a minute".
+      FW_FLOW_FLUSH_INTERVAL: "5s"
+
+  scheduler:
+    environment:
+      SCHEDULER_SCAN_TIMEOUT_SECS: "60"
+      SCANNER_SCAN_TIMEOUT_SECS: "45"
+      # Which launcher spawns each run-once scanner (D16). Defaults to docker-run
+      # (the base-compose default), but is interpolated from the shell env so the
+      # e2e driver can flip it — `SCHEDULER_LAUNCHER=docker-api bash e2e/async_local.sh`
+      # runs the SAME async pipeline over the raw Docker Engine API, proving the two
+      # launchers are at parity through the full 503 -> background-scan -> L2 -> decisive
+      # flow (not just the launch/fail-fast path the L5 unit+DooD e2e already covered).
+      SCHEDULER_LAUNCHER: "${SCHEDULER_LAUNCHER:-docker-run}"

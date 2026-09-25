@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Audit Log</title>
+  {{ template "head" }}
+  <style>
+    td.muted.num { white-space: nowrap; }
+    td.reason { min-width: 20rem; }
+    .exportnote { font-size: .78rem; margin: -.8rem 0 0; }
+    form.fp { display: flex; flex-direction: column; gap: .3rem; }
+    form.fp input[type=text] { font-size: 12px; padding: 4px 8px; width: 11rem; }
+    form.fp button { font-size: 12px; height: 28px; padding: 0 10px; white-space: nowrap; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Audit log</h1>
+      <p class="sub">Every verdict the gates recorded, newest first: what was pulled, what was stopped, and why.</p>
+    </div>
+    <div class="aside">{{ .Total }} {{ if .Filter.Active }}matching{{ else }}recent{{ end }} event(s){{ if .AuthUser }} · {{ .AuthUser }}{{ end }}</div>
+  </header>
+  {{ template "audittabs" "audit" }}
+
+  <form class="filters" method="get" action="/audit">
+    <input type="text" name="package" placeholder="package…" value="{{ .Filter.Package }}">
+    <input type="text" name="ecosystem" placeholder="ecosystem (npm/pypi/oci)…" value="{{ .Filter.Ecosystem }}">
+    <select name="action">
+      <option value="">any verdict</option>
+      <option value="allow" {{ if eq .Filter.Action "allow" }}selected{{ end }}>allow</option>
+      <option value="block" {{ if eq .Filter.Action "block" }}selected{{ end }}>block</option>
+    </select>
+    <button type="submit">Filter</button>
+    {{ if .Filter.Active }}<a class="clear" href="/audit">clear</a>{{ end }}
+    <a class="export" href="{{ .Filter.DownloadsHref }}">Who pulled these? →</a>
+    <a href="{{ .Filter.ExportHref }}">Export .jsonl ↓</a>
+  </form>
+  <p class="exportnote muted">Export is a provisional decision-log record (the authoritative log of what was pulled and why — evidence for a due-diligence obligation, not a compliance claim). It reflects the filter above.</p>
+
+  {{ if .Events }}
+  <table>
+    <thead>
+      <tr>
+        <th>When</th><th>Package</th><th>Ecosystem</th><th>Verdict</th>{{ if not $.ScoringOff }}<th>Score</th><th>Threshold</th>{{ end }}<th>Policy</th><th>Source</th><th>Reason</th>{{ if $.CanReport }}<th></th>{{ end }}
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Events }}
+      <tr>
+        <td class="muted num">{{ .At.UTC.Format "2006-01-02 15:04:05 UTC" }}</td>
+        <td class="pkg">{{ .Package }}</td>
+        <td>{{ if .Ecosystem }}{{ .Ecosystem }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td><span class="badge {{ .Action }}">{{ .Action }}</span>{{ if .Served }} <span class="muted" title="report mode: the verdict was block, but the gate relayed the package (#114)">served — report mode</span>{{ end }}</td>
+        {{ if not $.ScoringOff }}<td class="num">{{ .Score }}{{ if .Coverage }} <span class="muted" title="partial score: computed over {{ .Coverage }}">partial</span>{{ end }}</td>
+        <td class="num muted">{{ .Threshold }}</td>{{ end }}
+        <td>{{ if .PolicyDigest }}<span class="pkg" title="the policy in force when this verdict was made">{{ .PolicyDigest }}</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td>{{ if .SourceIP }}<span class="pkg">{{ .SourceIP }}</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td class="reason">{{ if .Reason }}{{ .Reason }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+        {{ if $.CanReport }}<td>{{ if eq .Action "block" }}
+          <form class="fp" method="post" action="/report-false-positive">
+            <input type="hidden" name="event_id" value="{{ .ID }}">
+            <input type="hidden" name="package" value="{{ .Package }}">
+            <input type="hidden" name="ecosystem" value="{{ .Ecosystem }}">
+            <input type="hidden" name="action" value="{{ .Action }}">
+            <input type="hidden" name="reason" value="{{ .Reason }}">
+            <input type="hidden" name="source" value="{{ .Source }}">
+            <input type="hidden" name="deny_kind" value="{{ .DenyKind }}">
+            <input type="hidden" name="rule" value="{{ .Rule }}">
+            <input type="text" name="note" placeholder="why this block was wrong…" maxlength="4096">
+            <button type="submit" title="record that this block was a false positive">report false positive</button>
+          </form>{{ end }}</td>{{ end }}
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else if .Filter.Active }}
+  <p class="empty">No events match this filter. <a href="/audit">Clear it</a> to see the full log.</p>
+  {{ else }}
+  <p class="empty">No audit events recorded yet. Events appear here as the firewall allows or blocks packages.</p>
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

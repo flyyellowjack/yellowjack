@@ -1,0 +1,61 @@
+{
+  "_comment": "Detection floor for issue #31. 'expect' is the REQUIRED outcome; the runner fails on any mismatch, including a clean-control false positive. 'known-gap' is INFORMATIONAL and never fails the run -- it records a shape the current scanner does not detect.",
+  "fixtures": [
+    {
+      "dir": "npm/clean-control",
+      "ecosystem": "npm",
+      "expect": "clean",
+      "shape": "ordinary package, no hooks, no dynamic evaluation",
+      "traced_to": "negative control - if this fires, the corpus is measuring noise, not detection"
+    },
+    {
+      "dir": "npm/install-hook-exfil",
+      "ecosystem": "npm",
+      "expect": "flagged",
+      "shape": "lifecycle hook runs code at install time",
+      "traced_to": "axios/plain-crypto-js: postinstall on a brand-new transitive dependency"
+    },
+    {
+      "dir": "npm/no-hook-calltime",
+      "ecosystem": "npm",
+      "expect": "flagged",
+      "shape": "NO lifecycle hook; payload shape on call",
+      "traced_to": "Lazarus react-html2pdf.js - no preinstall/install/postinstall at all; hook presence is not a reliable signal"
+    },
+    {
+      "dir": "npm/self-erasing",
+      "ecosystem": "npm",
+      "expect": "flagged",
+      "shape": "setup erases itself and rewrites its manifest",
+      "traced_to": "axios payload fs.unlink(__filename) - post-hoc tree inspection reads a cleaned crime scene"
+    },
+    {
+      "dir": "npm/mcp-handshake",
+      "ecosystem": "npm",
+      "expect": "flagged",
+      "shape": "MCP-server-shaped package acting at protocol handshake",
+      "traced_to": "D117 - Morphisec chain fired on tools/list before any prompt existed; Shai-Hulud 2.0 hunted mcp-server names"
+    },
+    {
+      "dir": "pypi/clean-control",
+      "ecosystem": "pypi",
+      "expect": "clean",
+      "shape": "ordinary distribution, no install-time work",
+      "traced_to": "negative control for the PyPI leg"
+    },
+    {
+      "dir": "pypi/obfuscated-calltime",
+      "ecosystem": "pypi",
+      "expect": "flagged",
+      "shape": "NO install-time work; base64+exec at call time",
+      "traced_to": "PyPI analogue of the no-hook shape; confirms content rules run on a bare directory"
+    },
+    {
+      "dir": "pypi/setup-exec",
+      "ecosystem": "pypi",
+      "expect": "known-gap",
+      "shape": "work performed at INSTALL time from setup.py (PyPI executes this by design)",
+      "traced_to": "MEASURED 2026-08-05: GuardDog does NOT flag an INERT install-time shape. Tried three variants (bare dir, sdist-style <name>-<version>/ layout, and suspicious imports subprocess/socket/base64) - all 0.0/10. Its PyPI install-time rules appear to require real behaviour (actual network/exec calls), which we will not ship in a fixture. Recorded as a coverage limit of the adopted scanner, NOT asserted as a detection."
+    }
+  ]
+}

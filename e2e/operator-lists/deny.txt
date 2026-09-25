@@ -1,0 +1,11 @@
+# e2e fixture: the OPERATOR's deny list (D193, issue #58, async_local.sh leg 21).
+#
+# left-pad is chosen for the mirror-image reason: the fake upstream serves it and it
+# resolves normally, so by default it is ALLOWED. If the deny list were not wired, this
+# package would be served and leg 21 fails. Between the two files, a broken wiring is
+# caught in both directions rather than only one.
+#
+# It is also deliberately NOT a package any other leg in async_local.sh touches -- a
+# deny list is loaded once at startup and applies for the whole run, so denying
+# something like lodash would silently break the legs above instead of testing this one.
+left-pad

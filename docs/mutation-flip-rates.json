@@ -1,0 +1,394 @@
+{
+  "fail-closed/borrowed-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/borrowed-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/borrowed-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/borrowed-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/borrowed-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 5381,
+    "flipped": 5381,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "fail-closed/borrowed-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/borrowed-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 3,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/no-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/no-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/no-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/no-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/no-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 5381,
+    "flipped": 5381,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "fail-closed/no-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/no-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 3,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/own-high-score-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-high-score-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-high-score-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-high-score-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-high-score-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/own-high-score-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/own-high-score-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/own-low-score-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-low-score-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-low-score-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-low-score-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "fail-closed/own-low-score-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 5381,
+    "flipped": 5381,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "fail-closed/own-low-score-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "fail-closed/own-low-score-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 3,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "unverified-open/borrowed-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/borrowed-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/borrowed-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/borrowed-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/borrowed-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 5381,
+    "flipped": 5381,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "unverified-open/borrowed-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "unverified-open/borrowed-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 3,
+    "flipped": 3,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "unverified-open/no-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/no-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/no-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/no-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/no-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 5381,
+    "flipped": 5381,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "unverified-open/no-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 20000,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "unverified-open/no-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 3,
+    "flipped": 3,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "unverified-open/own-high-score-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-high-score-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-high-score-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-high-score-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-high-score-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "unverified-open/own-high-score-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "unverified-open/own-high-score-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 0,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "unverified-open/own-low-score-repo/fresh-maintainer-and-publish-timing": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-low-score-repo/obfuscate-or-minify": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-low-score-repo/payload-postinstall-to-runtime-require": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-low-score-repo/split-payload-across-dependency": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": false
+  },
+  "unverified-open/own-low-score-repo/stage-across-releases": {
+    "applicable": 5381,
+    "blocked": 5381,
+    "flipped": 5381,
+    "flip_rate": 1,
+    "gate_visible": true
+  },
+  "unverified-open/own-low-score-repo/swap-declared-repo-to-high-reputation": {
+    "applicable": 20000,
+    "blocked": 20000,
+    "flipped": 0,
+    "flip_rate": 0,
+    "gate_visible": true
+  },
+  "unverified-open/own-low-score-repo/typosquat-rename-to-popular": {
+    "applicable": 3,
+    "blocked": 3,
+    "flipped": 3,
+    "flip_rate": 1,
+    "gate_visible": true
+  }
+}

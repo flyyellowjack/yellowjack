@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Decisions</title>
+  {{ template "head" }}
+  <style>
+    /* The wait is emphasised only when it has passed the target. A queue inside the
+       target should look unremarkable — colouring every row trains the eye to ignore
+       the colour, which is how the one row that matters gets missed. */
+    .wait { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .wait.over { color: var(--danger); font-weight: 600; }
+    .nextstep { border: 1px solid var(--line); border-left: 4px solid var(--accent);
+      border-radius: 10px; padding: 12px 16px; font-size: 13.5px; max-width: 110ch; }
+    .nextstep strong { font-weight: 600; }
+    .nodecider { border-left-color: var(--danger); }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .tabs .n { font-weight: 500; opacity: .8; margin-left: 4px; }
+
+    .desk { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; align-items: start; }
+    .queue { grid-column: span 2; overflow: hidden; }
+    .queue h2 { display: flex; align-items: center; gap: 10px; margin: 0; padding: 16px 20px;
+                border-bottom: 1px solid var(--line-soft); font-size: 15px; }
+    .item { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--line-soft);
+            color: var(--ink); text-decoration: none; }
+    .item:last-child { border-bottom: none; }
+    .item:hover { background: var(--surface-2); color: var(--ink); }
+    .item.sel { background: var(--select); box-shadow: inset 0 0 0 2px var(--brand); }
+    .item .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+    .item .name { font-family: var(--mono); font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+    .item .note { font-size: 13px; color: var(--ink-3); overflow-wrap: anywhere; }
+    .item .kind { font-weight: 600; color: var(--warn); }
+
+    .pane { grid-column: span 3; padding: 28px; display: flex; flex-direction: column; gap: 22px; }
+    .pane .title { display: flex; flex-direction: column; gap: 8px; }
+    .pane .title .eco { align-self: flex-start; }
+    .pane h2 { margin: 0; font-family: var(--mono); font-size: 22px; font-weight: 500; overflow-wrap: anywhere; }
+    .whybox { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; background: var(--warn-soft);
+           border-radius: 10px; color: var(--ink); max-width: none; font-size: 14px; }
+    .whybox.served { background: var(--ok-soft); }
+    .whybox strong { color: var(--warn-ink); }
+    .whybox.served strong { color: var(--ok-ink); }
+    .facts { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+    .facts div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .facts dt { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .facts dd { margin: 0; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+    .facts .deprecated { color: var(--warn); }
+    .rule { display: flex; flex-direction: column; gap: 12px; }
+    .rule label { font-size: 13px; font-weight: 600; }
+    .rule details { font-size: 13px; color: var(--muted); }
+    .rule details input { width: 100%; margin-top: 6px; }
+    .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .actions .fine { font-size: 13px; color: var(--muted); line-height: 1.45; max-width: 46ch; }
+    .settled h2 { display: flex; align-items: center; gap: 10px; }
+    .override { display: flex; gap: 6px; }
+    .override button { height: 30px; padding: 0 12px; font-size: 12px; }
+    @media (max-width: 1100px) { .desk { grid-template-columns: 1fr; } .queue, .pane { grid-column: auto; } }
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Decisions</h1>
+      <p class="sub">Packages the gate couldn&rsquo;t decide on its own. What you allow here is allowed for that package name.</p>
+    </div>
+    <div class="aside">{{ .Total }} decision(s) {{ if .Filter.Active }}matching{{ else }}recorded{{ end }}</div>
+  </header>
+
+  {{ if .Notice }}
+  <div class="banner {{ if eq .NoticeLevel "warn" }}warn{{ else if eq .NoticeLevel "err" }}bad{{ else }}ok{{ end }}">{{ .Notice }}</div>
+  {{ end }}
+
+  {{ if .CanWrite }}
+  <div class="banner rw">Acting as <strong>{{ .AuthUser }}</strong>. <strong>What a ruling reaches:</strong> allow lets through a package the policy would refuse; deny refuses it on every path, including one the policy would allow on its own (D272). Both are enforced only while the gate can reach the approval service &mdash; the <a href="/lists">deny list</a> is the block that survives an approval outage.</div>
+  {{ else }}
+  <div class="banner ro">Read-only. Set <code>CONSOLE_AUTH_USER</code> and <code>CONSOLE_AUTH_PASS</code> to enable manual overrides (they ship behind basic auth per D19).</div>
+  {{ end }}
+
+  <div class="toolbar">
+    <nav class="tabs" aria-label="Filter by ruling">
+      {{ range .Tabs }}<a href="{{ .Href }}"{{ if .Active }} class="active" aria-current="page"{{ end }}>{{ .Label }}<span class="n">· {{ .Count }}</span></a>{{ end }}
+    </nav>
+    <form class="filters" method="get" action="/decisions">
+      <input type="text" name="package" placeholder="package…" value="{{ .Filter.Package }}" aria-label="Filter by package">
+      <select name="verdict" aria-label="Filter by ruling">
+        <option value="">any verdict</option>
+        <option value="pending" {{ if eq .Filter.Verdict "pending" }}selected{{ end }}>pending</option>
+        <option value="approved" {{ if eq .Filter.Verdict "approved" }}selected{{ end }}>approved</option>
+        <option value="denied" {{ if eq .Filter.Verdict "denied" }}selected{{ end }}>denied</option>
+      </select>
+      <button type="submit">Filter</button>
+      {{ if .Filter.Active }}<a class="clear" href="/decisions">clear</a>{{ end }}
+    </form>
+  </div>
+
+  {{ if and .Filter.Active (eq .Total 0) }}
+  <p class="empty">No decisions match this filter. <a href="/decisions">Clear it</a> to see the full queue.</p>
+  {{ end }}
+
+  {{ range .Groups }}
+  {{ if eq .Verdict "pending" }}
+    {{ if or .Items (not $.Filter.Active) }}
+
+    {{/* #50: a queue that does not say what happens next and who decides it is the
+         configuration the study found people route around. Rendered for the pending
+         bucket only — a settled entry is not waiting on anyone. */}}
+    {{ if .Items }}
+      {{ if $.Decider }}
+      <p class="nextstep">
+        <strong>What happens next:</strong> nothing, until a person allows or denies each
+        package below. Nothing retries on its own and nothing expires &mdash; a package waits
+        here until someone acts. <strong>Who decides:</strong> <code>{{ $.Decider }}</code>, the
+        account this console is signed in as. The target is a wait measured in
+        <strong>hours</strong>; anything past a day is flagged. What a waiting package means for a
+        developer right now depends on the <a href="/policy">enforced policy</a>.
+      </p>
+      {{ else }}
+      <p class="nextstep nodecider">
+        <strong>What happens next:</strong> nothing, until a person allows or denies each
+        package below &mdash; and right now <strong>no one is accountable for doing it</strong>.
+        This console has no credential configured, so there is no named decider and rulings
+        are disabled. Set <code>CONSOLE_AUTH_USER</code> and <code>CONSOLE_AUTH_PASS</code> to
+        name one and enable the allow and deny actions.
+      </p>
+      {{ end }}
+    {{ end }}
+
+    <div class="desk">
+      <section class="card queue" aria-label="Waiting">
+        <h2><span class="badge pending">pending</span> Awaiting review</h2>
+        {{ range .Items }}
+        <a class="item{{ if .Selected }} sel{{ end }}" href="{{ .Href }}"{{ if .Selected }} aria-current="true"{{ end }}>
+          <div class="top">
+            <span>{{ if .Ecosystem }}{{ .Ecosystem }} · {{ end }}<span class="wait{{ if .OverTarget }} over{{ end }}">{{ if .Waiting }}Waiting {{ .Waiting }}{{ if .OverTarget }} &#9888;{{ end }}{{ else if .Impossible }}<span title="This entry's recorded enqueue time is in the future, which is not possible. Its real age is unknown and may be large. Do not read this row as new.">Waiting: unknown &#9888;</span>{{ else }}<span title="This entry predates queue-age tracking, so its wait is unknown. It is not zero.">Waiting: unknown</span>{{ end }}</span></span>
+            {{ if .KindLabel }}<span class="kind">{{ .KindLabel }}</span>{{ end }}
+          </div>
+          <span class="name">{{ .Package }}</span>
+          {{ if .Note }}<span class="note">{{ .Note }}</span>{{ end }}
+        </a>
+        {{ else }}
+        <p class="empty" style="padding:16px 20px">None.</p>
+        {{ end }}
+      </section>
+
+      {{ with $.Detail }}
+      <section class="card pane" aria-labelledby="dt">
+        <div class="title">
+          {{ if .Ecosystem }}<span class="eco">{{ .Ecosystem }}</span>{{ end }}
+          <h2 id="dt">{{ .Row.Package }}</h2>
+        </div>
+
+        <div class="whybox{{ if .Served }} served{{ end }}">
+          <strong>{{ if .Served }}Why it&rsquo;s waiting, and why it isn&rsquo;t blocked{{ else }}Why it&rsquo;s waiting{{ end }}</strong>
+          <span>{{ .Why }}</span>
+        </div>
+
+        <dl class="facts">
+          <div><dt>Last verdict</dt><dd>{{ if .LastVerdict }}{{ .LastVerdict }}{{ if .LastSeen }}, {{ .LastSeen }}{{ end }}{{ else }}Not in the recent audit log{{ end }}</dd></div>
+          <div><dt>Requested from</dt><dd>{{ if .Hosts }}{{ .Hosts }}{{ else }}No source host recorded{{ end }}</dd></div>
+          {{ with .Registry }}
+          {{ if .LatestVersion }}<div><dt>Latest version (registry)</dt><dd class="pkg">{{ .LatestVersion }}{{ if not .PublishedAt.IsZero }}, published {{ .PublishedAt.UTC.Format "2 Jan 2006" }}{{ end }}</dd></div>{{ end }}
+          {{ if .Maintainers }}<div><dt>Maintainers (registry)</dt><dd>{{ .Maintainers }}</dd></div>{{ end }}
+          {{ if .VersionCount }}<div><dt>Versions published</dt><dd>{{ .VersionCount }}</dd></div>{{ end }}
+          {{ if .Deprecated }}<div><dt>Maintainer&rsquo;s warning</dt><dd class="deprecated">{{ .Deprecated }}</dd></div>{{ end }}
+          {{ end }}
+        </dl>
+
+        {{ if $.CanWrite }}
+        <form class="rule" method="post" action="/override">
+          <input type="hidden" name="package" value="{{ .Row.Package }}">
+          <label for="note">Note for the audit log</label>
+          <textarea id="note" name="note" rows="2" placeholder="Why you&rsquo;re allowing or denying this"></textarea>
+          <details><summary>Know where its source lives? Give the repository and the gate will score it instead.</summary>
+            <input type="text" name="repoUrl" value="{{ .Row.RepoURL }}" placeholder="https://github.com/owner/repo" aria-label="Source repository for {{ .Row.Package }}">
+          </details>
+          <div class="actions">
+            <button class="primary big" type="submit" name="verdict" value="approved">Allow {{ .Row.Package }}</button>
+            <button class="danger big" type="submit" name="verdict" value="denied">Deny</button>
+            <span class="fine">Covers every version of this package. To allow one release only, pin it on the <a href="/lists">allow list</a>. The developer sees the result on their next install.</span>
+          </div>
+        </form>
+        {{ end }}
+      </section>
+      {{ end }}
+    </div>
+    {{ end }}
+
+  {{ else }}
+    {{ if or .Items (not $.Filter.Active) }}
+    <section class="settled">
+      <h2><span class="badge {{ .Verdict }}">{{ .Verdict }}</span> {{ .Label }}</h2>
+      {{ if .Items }}
+      <table>
+        <thead>
+          <tr>
+            <th>Package</th><th>Ruling</th><th>Waited</th><th>Repo</th><th>Note</th><th>Decided by</th><th>Updated</th>
+            {{ if $.CanWrite }}<th>Change</th>{{ end }}
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .Items }}
+          <tr>
+            <td class="pkg">{{ .Package }}</td>
+            <td><span class="badge {{ .Verdict }}">{{ .Verdict }}</span></td>
+            <td class="wait">{{ if .WaitEnded }}{{ .WaitEnded }}{{ else }}<span class="muted" title="This entry predates queue-age tracking, so its wait is unknown.">—</span>{{ end }}</td>
+            <td>{{ if .RepoURL }}<a href="{{ .RepoURL }}" rel="noreferrer noopener">{{ .RepoURL }}</a>{{ else }}<span class="muted">—</span>{{ end }}</td>
+            <td>{{ if .Note }}{{ .Note }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+            <td>{{ if .DecidedBy }}{{ .DecidedBy }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+            <td class="muted">{{ .UpdatedAt.UTC.Format "2006-01-02 15:04 UTC" }}</td>
+            {{ if $.CanWrite }}
+            <td>
+              <form class="override" method="post" action="/override">
+                <input type="hidden" name="package" value="{{ .Package }}">
+                {{ if eq .Verdict "denied" }}<button type="submit" name="verdict" value="approved">Allow instead</button>
+                {{ else }}<button class="danger" type="submit" name="verdict" value="denied">Deny instead</button>{{ end }}
+              </form>
+            </td>
+            {{ end }}
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+      {{ else }}
+      <p class="empty">None.</p>
+      {{ end }}
+    </section>
+    {{ end }}
+  {{ end }}
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

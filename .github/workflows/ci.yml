@@ -1,0 +1,36 @@
+# Checks for the public repository: build, vet, unit tests, formatting and doc links.
+# The end-to-end suite drives real package managers in Docker and runs separately
+# (sh scripts/dev.sh e2e, see docs/E2E_TESTING.md).
+#
+# Actions are pinned by commit SHA, not by tag: a tag can be moved, and this is the
+# supply chain of a supply-chain security tool.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: build
+        run: go build ./...
+      - name: vet
+        run: |
+          go vet ./...
+          go vet -tags e2e ./e2e/
+      - name: unit tests
+        run: go test ./... -count=1
+      - name: formatting
+        run: sh scripts/gofmt_check.sh
+      - name: doc links
+        run: sh scripts/check-doc-links.sh

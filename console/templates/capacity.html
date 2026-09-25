@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Capacity</title>
+  {{ template "head" }}
+  <style>
+    .banner > strong:first-child { display: block; margin-bottom: 2px; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+    .tile { display: flex; flex-direction: column; gap: 8px; padding: 20px; background: var(--surface);
+            border: 1px solid var(--line); border-radius: var(--radius); }
+    .tile .k { font-size: 13px; font-weight: 600; color: var(--muted); }
+    .tile .v { font-size: 30px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1;
+               font-variant-numeric: tabular-nums; }
+    .tile .sub { font-size: 13px; color: var(--muted); }
+    .integrity td.n { font-variant-numeric: tabular-nums; text-align: right;
+                      width: 6rem; }
+    .integrity tr.benign { opacity: .6; }
+    .integrity tr.hit td.n { font-weight: 700; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Capacity</h1>
+      <p class="sub">What is moving through the gates, and how much of it.</p>
+    </div>
+    <div class="aside">{{ count .Summary.Requests }} request{{ if ne .Summary.Requests 1 }}s{{ end }} in this window</div>
+  </header>
+
+  <p class="note">
+    Counted by the gates on the request path, so this is <strong>what actually passed through us</strong> — not an
+    inventory of a repository.
+  </p>
+
+  <form class="filters" method="get" action="/capacity">
+    <label><span>Ecosystem</span>
+      <input type="text" name="ecosystem" value="{{ .Filter.Ecosystem }}" placeholder="any" size="8"></label>
+    <label><span>Instance</span>
+      <input type="text" name="instance" value="{{ .Filter.Instance }}" placeholder="any" size="14"></label>
+    <label><span>From (RFC3339)</span>
+      <input type="text" name="from" value="{{ .Filter.From }}" placeholder="2026-09-01T00:00:00Z" size="22"></label>
+    <label><span>To (RFC3339)</span>
+      <input type="text" name="to" value="{{ .Filter.To }}" placeholder="now" size="22"></label>
+    <button type="submit">Apply</button>
+  </form>
+
+  {{ if not .HasFlow }}
+    <div class="banner">
+      <strong>No traffic recorded in this window.</strong>
+      That is either a quiet period or a firewall that is not reporting. The two look
+      identical here, so check <a href="/policy">Enforced policy</a> — if a replica is
+      listed and heartbeating, the quiet is real.
+    </div>
+  {{ end }}
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="k">Served to clients</div>
+      <div class="v">{{ bytes .Summary.BytesClient }}</div>
+      <div class="sub">bytes we handed to developers</div>
+    </div>
+    <div class="tile">
+      <div class="k">Fetched upstream</div>
+      <div class="v">{{ bytes .Summary.BytesUpstream }}</div>
+      <div class="sub">bytes we pulled from registries</div>
+    </div>
+    <div class="tile">
+      <div class="k">Requests</div>
+      <div class="v">{{ count .Summary.Requests }}</div>
+      <div class="sub">across {{ count .Summary.Packages }} distinct package{{ if ne .Summary.Packages 1 }}s{{ end }}</div>
+    </div>
+  </div>
+
+  <h2>Heaviest packages</h2>
+  <p class="why">
+    Which packages constitute the bulk of the traffic. Ranked by bytes served, heaviest
+    first; the tail below the service's top-N cap is not shown.
+  </p>
+  {{ if .Packages }}
+    <table>
+      <thead>
+        <tr>
+          <th>Package</th>
+          <th>Ecosystem</th>
+          <th class="num">Served</th>
+          <th class="num">Fetched</th>
+          <th class="num">Requests</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Packages }}
+          <tr>
+            <td class="mono">{{ .Display }}</td>
+            <td>{{ .Ecosystem }}</td>
+            <td class="num">{{ bytes .BytesClient }}</td>
+            <td class="num">{{ bytes .BytesUpstream }}</td>
+            <td class="num">{{ count .Requests }}</td>
+          </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  {{ else }}
+    <p class="empty">No package traffic recorded in this window.</p>
+  {{ end }}
+
+  <h2>Integrity and failures</h2>
+  <p class="why">
+    Pulls that did not complete cleanly. A truncated relay is the one to look at first:
+    it means a developer may be holding an incomplete artifact.
+  </p>
+  <table class="integrity">
+    <tbody>
+      {{ range .Integrity }}
+        <tr class="{{ if .Benign }}benign{{ else if gt .Count 0 }}hit{{ end }}">
+          <td class="n">{{ count .Count }}</td>
+          <td>{{ .Label }}<div class="why">{{ .Meaning }}</div></td>
+        </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</main>
+</div>
+</body>
+</html>

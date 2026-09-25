@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- BORROW-A-SCORE FIXTURE. One release, so LookupRepo resolves a single POM. -->
+<metadata>
+  <groupId>com.google.guava</groupId>
+  <artifactId>guava</artifactId>
+  <versioning>
+    <latest>33.6.0-jre</latest>
+    <release>33.6.0-jre</release>
+    <versions>
+      <version>33.6.0-jre</version>
+    </versions>
+    <lastUpdated>20260725000000</lastUpdated>
+  </versioning>
+</metadata>

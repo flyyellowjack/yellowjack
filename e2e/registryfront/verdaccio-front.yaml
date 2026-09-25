@@ -1,0 +1,23 @@
+# The customer's registry with Yellow Jack IN FRONT of it (D177). We are not in this
+# registry's path: its uplink is the public registry, reached through `uplink`.
+storage: /verdaccio/storage
+auth:
+  htpasswd:
+    file: /verdaccio/storage/htpasswd
+uplinks:
+  public:
+    url: http://uplink:80/
+    timeout: 10s
+    # max_fails high and fail_timeout short: this rig deliberately stops the uplink
+    # mid-run, and the default circuit-breaker would keep the uplink marked dead after
+    # it comes back, turning a later leg's failure into a confusing artifact of an
+    # earlier one.
+    max_fails: 100
+    fail_timeout: 1s
+    cache: true
+packages:
+  '**':
+    access: $all
+    publish: $all
+    proxy: public
+log: { type: stdout, format: pretty, level: warn }

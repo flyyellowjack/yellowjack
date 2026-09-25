@@ -1,0 +1,12 @@
+{
+  "name": "yj-unverifiable-d36",
+  "version": "1.0.0",
+  "description": "D36 FIXTURE: a package deps.dev has NO record of (this name is not published anywhere), claiming lodash's high-scoring repo. There is nothing to contradict the claim and nothing to confirm it — the DURABLY UNVERIFIED case. Pre-D36 this degraded open and inherited lodash's score; it must now fail closed. This is the fresh-typosquat profile: brand-new package, no deps.dev record yet.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lodash/lodash.git"
+  },
+  "dist": {
+    "tarball": "http://fakeupstream:8000/yj-unverifiable-d36/-/yj-unverifiable-d36-1.0.0.tgz"
+  }
+}
