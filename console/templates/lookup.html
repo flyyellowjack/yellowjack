@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Package lookup</title>
+  {{ template "head" }}
+  <style>
+    form.lookup { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    form.lookup input.pkg { min-width: 22rem; font-family: var(--mono); }
+    form.lookup label { color: var(--muted); font-size: 13px; }
+    /* The report/promise distinction is carried visually as well as in words: the
+       banner is deliberately NOT colour-coded by allow/block. A green "allow" chip
+       would read as a live clearance, which is exactly what this page cannot give. */
+    .report-banner { border: 1px solid var(--line); border-left: 4px solid var(--accent);
+      border-radius: 10px; padding: 12px 16px; font-size: 13.5px; }
+    .report-banner strong { font-weight: 600; }
+    /* Each section is a card, laid out two across: the page is a profile of one package. */
+    .sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+    .sections section { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+                        padding: 18px 22px; min-width: 0; }
+    .sections section.wide { grid-column: 1 / -1; }
+    section h2 { font-size: 15px; margin: 0 0 10px; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+    dt { color: var(--muted); }
+    @media (max-width: 1000px) { .sections { grid-template-columns: 1fr; } }
+    dd { margin: 0; }
+    .avail { font-size: .88rem; opacity: .8; font-style: italic; }
+    .never { border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 22px; font-size: 14px; }
+    .never strong { font-weight: 600; }
+    /* The maintainer's own deprecation notice. Given real weight rather than the
+       muted .avail treatment: it is a first-party warning about the package, and
+       rendering it quieter than our own footnotes would bury the most actionable
+       line on the page. Deliberately NOT red — deprecated is not blocked. */
+    .deprecated { border: 1px solid var(--line-strong); border-left: 3px solid var(--accent);
+                  border-radius: 4px; padding: .55rem .8rem; margin: .5rem 0 0;
+                  font-size: .92rem; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Look up a package</h1>
+      <p class="sub">What this deployment has observed about one package.</p>
+    </div>
+  </header>
+
+  <form class="lookup" method="get" action="/lookup">
+    <label for="package">Package</label>
+    <input class="pkg" id="package" name="package" value="{{.Query}}"
+           placeholder="e.g. lodash or @scope/name" autofocus>
+    <label for="ecosystem">Ecosystem</label>
+    <select id="ecosystem" name="ecosystem">
+      <option value=""{{if eq .Ecosystem ""}} selected{{end}}>any</option>
+      <option value="npm"{{if eq .Ecosystem "npm"}} selected{{end}}>npm</option>
+      <option value="pypi"{{if eq .Ecosystem "pypi"}} selected{{end}}>pypi</option>
+      <option value="maven"{{if eq .Ecosystem "maven"}} selected{{end}}>maven</option>
+      <option value="oci"{{if eq .Ecosystem "oci"}} selected{{end}}>oci</option>
+    </select>
+    <button type="submit">Look up</button>
+  </form>
+
+  {{if not .Searched}}
+    <p class="muted">Search for a package to see what this deployment has observed about it.</p>
+  {{else if not .Found}}
+    <div class="never">
+      <strong>Never requested through this deployment.</strong>
+      <p class="muted" style="margin:.4rem 0 0">
+        Nothing has pulled <span class="pkg">{{.Query}}</span> through this firewall, so there is
+        no history to show. This is not a clearance and not a block &mdash; it means the gate has
+        never rendered a decision about it. The first request will be evaluated then.
+      </p>
+    </div>
+  {{else}}
+
+    <div class="report-banner">
+      <strong>This is a report about the past, not a live verdict.</strong>
+      It shows what this deployment observed and recorded. The answer a pull gets right now is
+      computed by the firewall at request time &mdash; against the policy in force then, a score
+      that may since have expired, and any decision an admin has since changed. Do not read an
+      earlier &ldquo;allow&rdquo; as permission.
+    </div>
+
+    <div class="sections">
+    <section>
+      <h2>Package</h2>
+      <dl>
+        <dt>Name</dt><dd class="pkg">{{.Status.Package}}</dd>
+        {{if .Status.Ecosystem}}<dt>Ecosystem</dt><dd>{{.Status.Ecosystem}}</dd>{{end}}
+      </dl>
+    </section>
+
+    <section>
+      <h2>Last observed decision</h2>
+      {{with .Status.LastObserved}}
+        <dl>
+          <dt>Action</dt><dd>{{.Action}}</dd>
+          <dt>When</dt><dd>{{.At.UTC.Format "2006-01-02 15:04:05 UTC"}}</dd>
+          {{if .Reason}}<dt>Reason</dt><dd>{{.Reason}}</dd>{{end}}
+        </dl>
+      {{else}}
+        <p class="empty">No gate decision has been recorded for this package.</p>
+      {{end}}
+    </section>
+
+    <section>
+      <h2>Manual decision</h2>
+      {{with .Status.Decision}}
+        <dl>
+          <dt>Verdict</dt><dd>{{.Verdict}}</dd>
+          {{if .DecidedBy}}<dt>Decided by</dt><dd>{{.DecidedBy}}</dd>{{end}}
+          {{if .Note}}<dt>Note</dt><dd>{{.Note}}</dd>{{end}}
+        </dl>
+      {{else}}
+        <p class="empty">No admin has recorded a manual decision for this package.</p>
+      {{end}}
+      {{if .DecisionNote}}<p class="avail">Granularity: {{.DecisionNote}}</p>{{end}}
+    </section>
+
+    {{if not .ScoringOff}}
+    <section>
+      <h2>Score</h2>
+      {{with .Status.Score}}
+        <dl>
+          <dt>Repository</dt><dd>{{.Repo}}</dd>
+          {{if .HasScore}}<dt>Score</dt><dd class="num">{{printf "%.1f" .Value}}</dd>{{end}}
+          <dt>Scored at</dt><dd>{{.UpdatedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}</dd>
+          {{if .Partial}}<dt>Coverage</dt><dd>{{.ScoredChecks}} of {{.TotalChecks}} checks</dd>{{end}}
+        </dl>
+        {{if .Partial}}<p class="avail">This is a partial score: it was computed over {{.ScoredChecks}} of the {{.TotalChecks}} checks the run
+          emitted, without {{range $i, $c := .ComputedWithout}}{{if $i}}, {{end}}{{$c}}{{end}}. It counts as a score because every check
+          this deployment requires did score; it is not the same measurement as a full report, and a full re-scan may move it.</p>{{end}}
+      {{end}}
+      {{if .ScoreNote}}<p class="avail">{{.ScoreNote}}</p>{{end}}
+    </section>
+    {{end}}
+
+    <section class="wide">
+      <h2>Recent history</h2>
+      {{if .Status.RecentEvents}}
+        <table>
+          <thead><tr><th>When</th><th>Action</th><th>Reason</th></tr></thead>
+          <tbody>
+            {{range .Status.RecentEvents}}
+              <tr>
+                <td>{{.At.UTC.Format "2006-01-02 15:04:05 UTC"}}</td>
+                <td>{{.Action}}</td>
+                <td class="muted">{{.Reason}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p class="empty">No recent events.</p>
+      {{end}}
+    </section>
+
+    <section>
+      <h2>What the registry says</h2>
+      {{/* The registry's OWN account, fetched when the page was rendered (D158).
+           Kept visually distinct from our verdict: this is the upstream's statement,
+           not ours, and conflating the two is how a page starts implying we vouch
+           for what a third party reported. */}}
+      {{with .Status.UpstreamHarvest}}
+        <dl>
+          {{if .LatestVersion}}<dt>Latest version</dt><dd class="pkg">{{.LatestVersion}}</dd>{{end}}
+          {{if not .PublishedAt.IsZero}}<dt>Published</dt><dd>{{.PublishedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}</dd>{{end}}
+          {{if .VersionCount}}<dt>Versions published</dt><dd class="num">{{.VersionCount}}</dd>{{end}}
+          {{if .Maintainers}}<dt>Maintainers</dt><dd class="num">{{.Maintainers}}</dd>{{end}}
+        </dl>
+        {{if .Deprecated}}
+          {{/* The lead is deliberately SCOPE-NEUTRAL. It used to read "has deprecated
+               this package", which is right for an npm deprecation but overstates a
+               PyPI yank: a yank is per-RELEASE (PEP 592), so the latest release being
+               yanked says nothing about the others. Telling an operator the package is
+               deprecated when one release was pulled is a false statement on the page
+               that is supposed to be the trustworthy one. The detail line below says
+               exactly what happened, in the maintainer's own words where they gave
+               any. */}}
+          <p class="deprecated"><strong>The maintainer has published a warning about this package.</strong>
+            {{.Deprecated}}</p>
+        {{end}}
+        <p class="avail">Read from the registry just now, not from a cache &mdash; so it is the one
+          thing on this page that is current rather than historical.</p>
+      {{end}}
+      {{if .UpstreamNote}}<p class="avail">{{.UpstreamNote}}</p>{{end}}
+    </section>
+
+    <section>
+      <h2>Not collected</h2>
+      {{if .CacheNote}}<p class="avail">Cache &mdash; {{.CacheNote}}</p>{{end}}
+    </section>
+    </div>
+
+  {{end}}
+</main>
+</div>
+</body>
+</html>

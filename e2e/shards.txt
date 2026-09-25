@@ -1,0 +1,139 @@
+# e2e/shards.txt — which e2e test runs in which CI job (#140).
+#
+# The `e2e` job reached 20.5-22.7 min against the rule docs/BUILD_LOG.md committed when it
+# last died on its own deadline: "the suite wants SPLITTING, not a longer rope, if it passes
+# 25 min". This file is the split. Three jobs run in parallel, each with its own -run.
+#
+# WHY AN EXPLICIT LIST AND NOT A PATTERN. `go test -run` matches names, and a pattern that
+# matches nothing fails SILENTLY: no error, no skip line, just a test that quietly stopped
+# being gated. An explicit list makes that impossible to do by accident, because
+# TestEveryE2ETestIsInExactlyOneShard derives the full set of `func Test...` from the e2e
+# sources by AST and refuses any test that is missing from here or listed twice.
+#
+# So adding an e2e test means adding a line here. That friction is the point: it is the same
+# bargain as docs/mode-matrix.json, where a new mode cannot be added without someone
+# recording what it does.
+#
+# ⚠️ The ORIGINAL proposal on #140 was to reuse the existing `ECOSYSTEM=npm|pypi|oci|maven`
+# selectors. Do not. Each of those selects exactly ONE test (`-run TestNpmEndToEnd`), so four
+# jobs built on them would have run 4 of the 89 tests and gone green faster than the job they
+# replaced.
+#
+# FORMAT: <shard> <TestName> <seconds>
+#
+# The third column is the duration MEASURED in job 16576955361 (pipeline 2859816713), used to
+# balance the shards by longest-processing-time-first. It is documentation of how the balance
+# was chosen, not an assertion — nothing fails when a test gets slower. Rebalance with
+# `sh scripts/e2e_shards.sh --rebalance <trace-file>` when the spread gets wide.
+#
+# TestRealDockerPullOfAnAllowedImageSucceeds carries an ESTIMATE (60s): it skipped in that run
+# (the image ships no attestation manifests today), so it has never been measured here. The
+# estimate is deliberately generous -- it does a real docker pull when it does run.
+#
+# Balance as committed: shard 1 = 6.9 min, shard 2 = 6.9 min, shard 3 = 6.9 min.
+
+# ── shard 1 ──
+1 TestAHumanDenyRefusesAPackageThePolicyAllows 95.0
+1 TestAdversarialNpmDefaultDeploymentRefusesTheConfusedDeputy 2.4
+1 TestAdversarialOciBlobPathsCannotBypassTheGate 6.4
+1 TestAdversarialPathsRefusedEvenWhenNothingIsBlocked 8.0
+1 TestAdversarialPypiSignedMetadataBindingCannotBeConfused 2.8
+1 TestAdversarialUnknownPathsAreRefused 1.4
+1 TestAskingTheOSForAPortLandsInTheOutboundRange 0.0
+1 TestBlockReasonIsLegibleInEveryRealClient 94.8
+1 TestBlockVerdictIsStructuredOnTheWire 29.9
+1 TestDecisionEmittersOnTheBytePathAreMarkedAsBytes 0.0
+1 TestDecisionParserAgreesWithTheRawCount 0.0
+1 TestEveryDecisionEmitterIsParsedByTheHarness 0.0
+1 TestFirewallMakesNoUnconfiguredEgress 16.4
+1 TestFreePortNeverRepeats 0.0
+1 TestFreePortProbeIsNotTrustedOnDind 0.0
+1 TestFreePortStaysOutOfTheOutboundRange 0.0
+1 TestHarnessParsesEveryDecisionLogShape 0.0
+1 TestHealthyBootIsQuiet 2.6
+1 TestInterceptCAGenerationLatency 0.3
+1 TestInterceptionCanForgeNpmIntegrity 5.1
+1 TestInterceptionChainThroughIntermediateCA 9.0
+1 TestInterceptionGoChecksumDatabase 3.2
+1 TestInterceptionMaven 51.5
+1 TestInterceptionMavenTrustAndChecksums 53.3
+1 TestInterceptionPypi 8.9
+1 TestLogAroundAnchorsOnLastMatch 0.0
+1 TestLogAroundClampsAtBoundaries 0.0
+1 TestLogAroundEmptyLog 0.0
+1 TestLogAroundFallbackSaysAbsenceProvesNothing 0.0
+1 TestLogAroundShortLogShownWhole 0.0
+1 TestLogAroundShowsFailuresFarFromTheEnd 0.0
+1 TestLogContractGuardCanFail 0.0
+1 TestMaxOverlap 0.0
+1 TestMvnFailedArtifactsNoMatches 0.0
+1 TestMvnFailedArtifactsParsesRealOutput 0.0
+1 TestNpmCoalescesConcurrentSameKeyLookups 16.0
+1 TestNpmCoalescesUpstreamScoringCalls 46.9
+1 TestNpmLockfileByteGate 18.9
+1 TestOCIDeclaredRepoIsUnverifiableAndFailsClosedByDefault 5.2
+1 TestPypiEndToEnd 6.2
+1 TestRenderedEmittersMatchRealLogText 0.0
+1 TestReportModeBlocksNothingForARealClient 10.1
+1 TestReportModeServesWhatEnforceRefuses 11.8
+1 TestStartupNoiseDetector 0.0
+1 TestDeclaredRepositoryBehindATLSTerminator 172.0
+1 TestAMovedTagIsRefusedOnTheFirstPullByARealClient 25.1
+
+# ── shard 2 ──
+2 TestAdversarialForgedApprovalCannotOpenTheGate 49.5
+2 TestAdversarialNpmTarballPathCannotBeConfused 8.9
+2 TestAdversarialOciHonestBlobStillFlows 7.5
+2 TestAdversarialOciPushIsRefused 1.4
+2 TestAdversarialPypiFilesPathCannotBeConfused 2.8
+2 TestAdversarialUnknownPathsRelayWhenPolicyAllows 1.5
+2 TestContainerRunsUnderHardenedDeployment 2.5
+2 TestImageDoesNotRunAsRoot 1.0
+2 TestInterceptionChainThroughAuthenticatingProxy 10.0
+2 TestInterceptionOciDigestPinDefeatsSwap 10.5
+2 TestInterceptionPreservesNpmIntegrity 93.1
+2 TestMavenEndToEnd 37.8
+2 TestNpmCooldownHoldsBackAJustPublishedRelease 4.5
+2 TestNpmLockfileResolvedIsStableAndIntegrityUntouched 21.6
+2 TestNpmPinnedAdvisorySteersResolutionToTheCompliantVersion 6.0
+2 TestNpmServedVersionMustMatchTheTarball 4.4
+2 TestOciBlobFetchIsGated 12.9
+2 TestOciEndToEnd 18.7
+2 TestOnboardingCostIsOneLinePerClient 31.9
+2 TestInertSettingIsLoudAtBoot 12.0
+3 TestGateBehindATLSTerminator 75.3
+2 TestMavenBehindATLSTerminator 226.8
+2 TestPypiPinnedBlockByteFetch 5.2
+2 TestReadinessTracksTheDeployedList 12.3
+2 TestRealDockerPullOfAnAllowedImageSucceeds 60.0
+2 TestTheProductChainsThroughACorporateProxy 31.0
+2 TestUpstreamCredentialRotation 8.5
+2 TestPypiExactPinOfAnAdvisoryVersionIsRefused 61.0
+2 TestNpmRepositorySpellingsAreResolved 30.0
+
+# ── shard 3 ──
+3 TestAdversarialDefaultByteGateRefusesAHardDenyWithoutLeakingPolicy 11.9
+3 TestAdversarialOciPushRelaysWhenPolicyAllows 1.7
+3 TestAdversarialPathsCannotBypassTheGate 4.8
+3 TestAdversarialReferrersIsRelayedAsInfrastructure 1.4
+3 TestAttestationManifestIsServedForAnAllowedImage 6.9
+3 TestBlockedPackageIsClearableAndTheClientSeesIt 75.0
+3 TestHonestClientTrafficStillFlows 8.6
+3 TestInterceptionChainsThroughCorporateProxy 9.9
+3 TestInterceptionNpm 92.6
+3 TestInterceptionOci 16.3
+3 TestInterceptionPreflight 3.4
+3 TestInterceptionPythonTrustMatrix 20.0
+3 TestMavenGradleFetchesModuleMetadata 16.9
+3 TestMavenReleaseWindowThroughARealClient 47.2
+3 TestNpmEndToEnd 36.5
+3 TestNpmItselfDoesNotCompareTheVersions 2.7
+3 TestNpmManifestLayoutsThatDisagreeWithAFirstMatchReader 7.8
+3 TestNpmScopedPackageIsJudgedUnderItsDecodedName 10.5
+3 TestNpmSignedUrlsSurviveLockfileReplay 22.3
+3 TestOciBlobUploadPathsRouteToTheByteGate 5.6
+3 TestPypiSignedUrlsHonestInstall 2.8
+3 TestPypiWheelServedUnderAnotherVersionIsRefusedForRealPip 5.4
+3 TestReadOnlyFlagIsActuallyApplied 1.4
+3 TestMavenStrictChecksumsSurviveTheGate 220.0
+3 TestInterceptionWithStepCA 162.0

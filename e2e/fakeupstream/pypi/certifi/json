@@ -1,0 +1,11 @@
+{
+  "info": {
+    "name": "certifi",
+    "version": "2026.7.22",
+    "summary": "HONEST FIXTURE: claims certifi/python-certifi, which is what deps.dev records.",
+    "project_urls": {
+      "Source": "https://github.com/certifi/python-certifi"
+    },
+    "home_page": "https://github.com/certifi/python-certifi"
+  }
+}

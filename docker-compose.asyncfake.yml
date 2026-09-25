@@ -1,0 +1,155 @@
+# Deterministic-scanner override for the ASYNC local-mode rig only (issue #55).
+# Layered by e2e/async_local.sh on top of docker-compose.yml + docker-compose.e2e.yml.
+#
+# WHY THIS IS ITS OWN FILE rather than more lines in docker-compose.e2e.yml:
+# e2e/verify_repo_local.sh layers docker-compose.e2e.yml too. Putting the fixture
+# image in there would silently repoint THAT rig's scheduler at an image it never
+# builds, so its scans would stop reporting — and the borrow-a-score rig asserts on
+# what does and does not appear in the scheduler's log, so it would have failed in a
+# way that looked like a verification bug. Scope the fixture to the rig that builds it.
+services:
+  firewall:
+    environment:
+      # The OPERATOR's own allow/deny lists (D193, issue #58) -- async_local.sh leg 21.
+      #
+      # ⚠️ THESE LIVE HERE, NOT IN docker-compose.e2e.yml, AND THAT IS THE WHOLE POINT.
+      # They were put in the shared e2e override first and it broke verify_repo_local.sh,
+      # which layers that same file and uses `left-pad` as its VERIFIED package for leg B
+      # ("must reach the scanner"). Our deny fixture blocked it before any scan could be
+      # launched, so a rig testing repo verification failed on a policy it never asked
+      # for. A shared override is shared: anything that changes a VERDICT belongs in the
+      # file only one rig layers, which is this one.
+      #
+      # Absolute container paths, because loadOperatorList refuses a relative one
+      # (#38 / CVE-2025-64726).
+      #
+      # The host side is .e2e-lists/, a RUN-SCOPED GIT WORKING TREE that async_local.sh
+      # creates from the committed fixture in e2e/operator-lists/ and deletes on the way
+      # out. It used to be the committed fixture directory itself, which was simpler but
+      # had leg 22 editing a tracked file in place and restoring it in a trap -- a failure
+      # at the wrong moment left the repo dirty. It has to be a git repo now in any case:
+      # leg 23 has the CONSOLE write these files, and the console commits (D193 option
+      # (c)), so there must be something to commit into.
+      # The known-malware feed (#160), EMPTY at boot. Configured on purpose even
+      # though it names nothing: "configured and empty" is the state a deployment sits
+      # in between refreshes, and leg 21b's whole point is that a file that gains an
+      # advisory while the gate runs is enforced without a restart. An absent feed would
+      # make that leg unable to tell a reload from a feature that is simply off.
+      FW_MALWARE_LIST: "/etc/yellowjack/feed/malware.ndjson"
+      FW_ALLOW_LIST: "/etc/yellowjack/lists/allow.txt"
+      FW_DENY_LIST: "/etc/yellowjack/lists/deny.txt"
+      # L1 (in-process score cache) TTL, deliberately short here.
+      #
+      # This is load-bearing for leg 7, and the reason is worth knowing: the operator
+      # re-scan of issue #12 is `DELETE /v1/scores` on the APPROVAL service, which
+      # clears the durable L2 row only. It does NOT reach into a firewall replica's
+      # in-memory L1, so a firewall that already has the score cached keeps serving it
+      # until that entry expires — at the production default (FW_SCORE_CACHE_TTL=1h) an
+      # operator-triggered re-scan does nothing visible for up to an hour. The rig
+      # ASSERTS both halves of that behavior rather than papering over it (legs 7a/7b);
+      # whether DELETE ought to punch through L1 is an open product question on #55.
+      #
+      # 30s is chosen so both halves are deterministic: long enough that the
+      # immediately-after-DELETE pull is still inside the masking window (legs 3-6 are a
+      # handful of curls, ~1-3s), short enough that leg 7b's poll doesn't dominate.
+      FW_SCORE_CACHE_TTL: "30s"
+    volumes:
+      # Read-only on purpose. The firewall reads these once at startup and never
+      # writes them (D103: we never mutate durable state), so a regression that
+      # tried to write would fail loudly here rather than in production.
+      # ⚠️ THE DIRECTORY, NOT THE TWO FILES, and this is a DEPLOYMENT REQUIREMENT rather
+      # than a rig convenience. A bind mount of a single FILE pins that file's inode into
+      # the container's mount table. The console writes atomically -- temp file, then
+      # rename -- so a console edit REPLACES the inode, and a container holding a
+      # file-mount goes on reading the old one forever.
+      #
+      # The failure is silent and total in the worst direction: the console reports
+      # "committed and pushed", git history is perfect, and the gate never enforces any of
+      # it. Leg 23 caught it only because it pulls a real package afterwards; leg 22 had
+      # missed it for two runs because appending with >> writes in PLACE and keeps the
+      # inode, which a file mount does see.
+      #
+      # Mounting the directory means the gate re-resolves the name on every reload, so it
+      # picks up the new inode. Still :ro -- the gate reads, it never writes (D103).
+      - ./.e2e-lists:/etc/yellowjack/lists:ro
+      # THE DIRECTORY, for the same reason as the lists above: leg 21b appends to the
+      # feed and then truncates it, and a real refresh writes a new file and renames it
+      # over this one, which a file-level mount would never see.
+      - ./.e2e-feed:/etc/yellowjack/feed:ro
+
+  # The write-enabled console, given a git working tree to author the lists into
+  # (#58 increment 3b, D193 QT2) -- async_local.sh leg 23.
+  #
+  # ⚠️ SCOPED TO THIS FILE for the same reason the lists above are: docker-compose.e2e.yml
+  # is layered by verify_repo_local.sh too, and that rig neither creates .e2e-lists nor
+  # wants a console that can change verdicts. A missing bind-mount source is a stack that
+  # will not start, so this would have broken a rig testing something else entirely.
+  console-auth:
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+      # The OPT-IN git-capable image. The default console runs on distroless/static and
+      # has no git binary at all, so list editing reports itself DISABLED there -- see the
+      # stage's own comment in console/Dockerfile for why that is the default rather than
+      # an oversight. This target is what a deployer who turns list editing on would run,
+      # so it is what the rig must exercise.
+      target: console-git
+    environment:
+      CONSOLE_LIST_REPO: "/srv/lists"
+      CONSOLE_LIST_ALLOW_FILE: "allow.txt"
+      CONSOLE_LIST_DENY_FILE: "deny.txt"
+      CONSOLE_LIST_ECOSYSTEM: "npm"
+      # A REAL remote, so the push half of the mechanism is exercised rather than
+      # assumed. It is a bare repo on a second mount -- not a network remote, but it is
+      # the same `git push` code path, and it makes "did the change leave this host?"
+      # a question the rig can actually answer.
+      CONSOLE_LIST_REMOTE: "origin"
+    volumes:
+      # READ-WRITE, unlike the firewall's mounts above. That asymmetry is the whole
+      # architecture in two lines: the console AUTHORS policy, the enforcement plane only
+      # ever READS it (D103 -- the gate never mutates durable state).
+      - ./.e2e-lists:/srv/lists
+      - ./.e2e-lists-remote:/srv/lists-remote
+      # git refuses to touch a repository owned by a different uid ("detected dubious
+      # ownership"), which is precisely what a bind mount gives you: the host owns the
+      # files, this container runs as 65532. The console declares its OWN repo safe per
+      # invocation, but a push also opens the REMOTE, and a process should not vouch for
+      # a repository it was never pointed at. So the DEPLOYER vouches, here -- the same
+      # thing a real operator with a local-path remote has to do.
+      - ./.e2e-lists-gitconfig:/home/nonroot/.gitconfig:ro
+
+  # The OIDC console gets the SAME git-capable image and the SAME list mounts as
+  # console-auth, so legs 24-27 exercise the same write path leg 23 does -- the only
+  # difference between the two instances is HOW the operator is identified, which is the
+  # variable under test. Everything below is a copy of console-auth's block on purpose;
+  # see its comments for why each line exists.
+  console-oidc:
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+      target: console-git
+    environment:
+      CONSOLE_LIST_REPO: "/srv/lists"
+      CONSOLE_LIST_ALLOW_FILE: "allow.txt"
+      CONSOLE_LIST_DENY_FILE: "deny.txt"
+      CONSOLE_LIST_ECOSYSTEM: "npm"
+      CONSOLE_LIST_REMOTE: "origin"
+    volumes:
+      - ./.e2e-lists:/srv/lists
+      - ./.e2e-lists-remote:/srv/lists-remote
+      - ./.e2e-lists-gitconfig:/home/nonroot/.gitconfig:ro
+
+  scheduler:
+    environment:
+      # The deterministic fixture, NOT yellowjack-scanner:dev. e2e/async_local.sh
+      # builds it; e2e/fakescanner/README.md explains why the third-party scorecard
+      # binary is the one component faked and everything else is left real.
+      #
+      # Before this, the rig got its "unscorable" outcome from the REAL scorecard
+      # binary failing auth because CI sets no GITHUB_TOKEN — so the required gate was
+      # green BECAUSE scanning was broken, failed when run with a working token, and
+      # would have gone red the day scanning was fixed.
+      #
+      # Overridable so a human can point the same rig at the real scanner for a live
+      # sanity check: SCHEDULER_SCANNER_IMAGE=yellowjack-scanner:dev bash e2e/async_local.sh
+      SCHEDULER_SCANNER_IMAGE: "${SCHEDULER_SCANNER_IMAGE:-yellowjack-scanner-fake:e2e}"

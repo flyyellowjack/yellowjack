@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Enforced policy</title>
+  {{ template "head" }}
+  <style>
+    .banner > strong:first-child { display: block; margin-bottom: 2px; }
+    .plain { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; align-items: start; }
+    .plain .rules { grid-column: span 3; overflow: hidden; }
+    .plain .side { grid-column: span 2; display: flex; flex-direction: column; gap: 16px; }
+    .rules ol { margin: 0; padding: 0; list-style: none; }
+    .rules li { display: flex; align-items: center; gap: 16px; padding: 16px 22px; border-bottom: 1px solid var(--line-soft); }
+    .rules li:last-child { border-bottom: none; }
+    .rules li.off { opacity: .55; }
+    .rules .n { font-family: var(--mono); font-size: 13px; color: var(--muted-2); width: 20px; flex-shrink: 0; }
+    .rules .t { display: flex; flex-direction: column; gap: 2px; flex-grow: 1; min-width: 0; }
+    .rules .title { font-size: 14px; font-weight: 600; }
+    .rules .detail { font-size: 13px; color: var(--muted); }
+    .rules .also { background: var(--surface-2); border-top: 1px solid var(--line-soft); }
+    .rules .also h3 { margin: 14px 22px 0; }
+    .ecotabs { padding: 12px 22px 0; }
+    .panel { padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; }
+    .panel h2 { margin: 0; font-size: 15px; }
+    .panel p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink-3); }
+    .panel .change { font-size: 13px; }
+    .gate { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+    .gate.stale { color: var(--danger); }
+    details.engine { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 22px; }
+    details.engine > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+    details.engine[open] > summary { margin-bottom: 14px; }
+    details.engine .group { border-color: var(--line-soft); }
+    @media (max-width: 1100px) { .plain { grid-template-columns: 1fr; } .plain .rules, .plain .side { grid-column: auto; } }
+    .group { border: 1px solid var(--line); border-radius: var(--radius); padding: .9rem 1.1rem;
+             margin-bottom: 1.5rem; }
+    .group > h2 { font-size: 1rem; margin: 0 0 .5rem; display: flex;
+                  align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+    .digest { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: .8rem; opacity: .7; }
+    .replicas { font-size: .87rem; margin: .1rem 0 1rem; }
+    .replicas span.r { display: inline-block; margin-right: .8rem; }
+    .replicas .stale { opacity: .6; }
+    .chain { margin: 0 0 1rem; }
+    .chain h3 { font-size: .9rem; margin: .8rem 0 .3rem; text-transform: uppercase;
+                letter-spacing: .04em; opacity: .75; }
+    .chain .dflt { font-size: .85rem; opacity: .8; margin: .3rem 0 0; }
+    ol.rules { margin: .2rem 0; padding-left: 1.6rem; font-size: .88rem; }
+    ol.rules li { padding: .12rem 0; }
+    ol.rules li.implicit { opacity: .7; font-style: italic; }
+    .act { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+           font-size: .78rem; padding: .05rem .35rem; border-radius: 3px;
+           border: 1px solid var(--line-strong); margin-right: .5rem; }
+    .act-allow { background: var(--ok-soft); }
+    .act-allow-but-log { background: var(--accent-soft); }
+    .act-reject { background: var(--danger-soft); }
+    .values { max-width: 44rem; }
+    .values td.k { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Policy</h1>
+      <p class="sub">Checked top to bottom. The first rule that matches decides. This is the enforced policy, as every gate reports it.</p>
+    </div>
+    <div class="aside">{{ .Total }} replica{{ if ne .Total 1 }}s{{ end }} reporting</div>
+  </header>
+
+  {{ if .Err }}
+    <div class="banner bad"><strong>Policy unknown</strong>{{ .Err }}</div>
+  {{ else }}
+
+  {{ if .Diverged }}
+    <div class="banner bad">
+      <strong>Replicas are enforcing different policies</strong>
+      {{ .FreshGroups }} distinct policies are in force across the {{ .DivergedIn }} replicas that are
+      currently reporting. A rolling deploy in progress explains this briefly; if it
+      persists, some replicas did not pick up a change and your gate is applying more
+      than one posture at once.
+    </div>
+  {{ end }}
+
+  {{ if .Plain.ReportMode }}
+    <div class="banner warn"><strong>Report mode</strong>Every &ldquo;Block&rdquo; below is logged and then served. Nothing is refused until the gates run in enforce mode.</div>
+  {{ end }}
+
+  {{ if .Plain.Rules }}
+  <div class="plain">
+    <section class="card rules" aria-labelledby="rl">
+      <div class="card-head"><h2 id="rl">Rules{{ if .EcoTabs }} for {{ ecosystem .Eco }}{{ end }}</h2><span class="muted" style="font-size:12px">In the order the gate checks them</span></div>
+      {{ if .EcoTabs }}<nav class="tabs ecotabs" aria-label="Ecosystem">{{ range .EcoTabs }}<a href="{{ .Href }}"{{ if .Active }} class="active" aria-current="page"{{ end }}>{{ .Label }}</a>{{ end }}</nav>{{ end }}
+      <ol>
+        {{ range .Plain.Rules }}
+        <li{{ if .Off }} class="off"{{ end }}>
+          <span class="n">{{ .N }}</span>
+          <div class="t"><span class="title">{{ .Title }}</span><span class="detail">{{ .Detail }}</span></div>
+          <span class="badge {{ .Class }}">{{ if .Off }}Off{{ else }}{{ .Action }}{{ end }}</span>
+        </li>
+        {{ end }}
+      </ol>
+      {{ if .Plain.Also }}
+      <div class="also">
+        <h3>Also: which versions a registry response offers</h3>
+        <ol>
+          {{ range .Plain.Also }}
+          <li><span class="n">&middot;</span><div class="t"><span class="title">{{ .Title }}</span><span class="detail">{{ .Detail }}</span></div><span class="badge {{ .Class }}">{{ .Action }}</span></li>
+          {{ end }}
+        </ol>
+      </div>
+      {{ end }}
+    </section>
+
+    <div class="side">
+      <section class="card panel" aria-labelledby="src">
+        <h2 id="src">Where policy comes from</h2>
+        <p>Each gate&rsquo;s settings come from its own environment (<code>FW_*</code>), and every gate reports what it actually loaded. That is why this page shows what is enforced, not what was intended.</p>
+        <p>Your allow and block lists are files the gates re-read every few seconds{{ if .ListSource }}, edited on <a href="/lists">Allow &amp; block lists</a> and committed to <code>{{ .ListSource }}</code>{{ end }}.</p>
+        {{ range .ListChanges }}
+        <p class="change"><strong>{{ if eq .Kind "allow" }}Allow list{{ else }}Block list{{ end }}</strong> &middot; last change {{ .When }} by {{ .Author }} &middot; <span class="mono">{{ .Short }}</span><br><span class="muted">&ldquo;{{ .Subject }}&rdquo;</span></p>
+        {{ end }}
+      </section>
+      <section class="card panel" aria-labelledby="gt">
+        <h2 id="gt">Gates</h2>
+        {{ range .Groups }}{{ range .Replicas }}
+        <div class="gate{{ if .Stale }} stale{{ end }}"><span class="mono">{{ .Instance }}</span><span class="muted">{{ if .Ecosystem }}{{ ecosystem .Ecosystem }} &middot; {{ end }}{{ .Age }}{{ if .Stale }} &mdash; not reporting{{ end }}</span></div>
+        {{ end }}{{ end }}
+        {{ range .Silent }}<div class="gate stale"><span class="mono">{{ .Instance }}</span><span class="muted">no policy reported</span></div>{{ end }}
+      </section>
+    </div>
+  </div>
+  {{ end }}
+
+  <details class="engine"{{ if not .Plain.Rules }} open{{ end }}>
+  <summary>The engine&rsquo;s view: every gate&rsquo;s rule chains, lists and settings</summary>
+  <p class="note">
+    What each firewall replica reports it is <em>actually enforcing</em>, in rule order,
+    as its own engine describes it &mdash; not what a config file says it should be.
+    Rules are shown by name and action: a rule&rsquo;s condition is compiled Go and cannot be
+    displayed, the same way a packet filter lists an ACL rather than the code behind it.
+    This page is read-only.
+  </p>
+
+  {{ if .Groups }}
+    {{ range .Groups }}
+      <section class="group">
+        <h2>
+          Policy <span class="digest">{{ .Digest }}</span>
+          <span class="muted">&mdash; {{ len .Replicas }} replica{{ if ne (len .Replicas) 1 }}s{{ end }}</span>
+        </h2>
+
+        <div class="replicas">
+          {{ range .Replicas }}
+            <span class="r{{ if .Stale }} stale{{ end }}">
+              <span class="mono">{{ .Instance }}</span>
+              {{ if .Ecosystem }}<span class="muted">({{ .Ecosystem }})</span>{{ end }}
+              <span class="muted">{{ .Age }}{{ if .Stale }} &mdash; not reporting{{ end }}</span>
+            </span>
+          {{ end }}
+        </div>
+
+        {{ range .Policy.Chains }}
+          <div class="chain">
+            <h3>{{ .Name }}</h3>
+            <ol class="rules">
+              {{ range .Rules }}
+                <li{{ if .Implicit }} class="implicit"{{ end }}>
+                  <span class="act act-{{ .Action }}">{{ .Action }}</span>{{ .Name }}
+                </li>
+              {{ end }}
+            </ol>
+            <p class="dflt">
+              A request matching no rule above is
+              <strong>{{ .DefaultAction }}</strong>ed.
+            </p>
+          </div>
+        {{ end }}
+
+        {{ if .Policy.Lists }}
+          <h3 style="font-size:.9rem; opacity:.75; text-transform:uppercase; letter-spacing:.04em;">Operator lists</h3>
+          <p class="why" style="font-size:.85rem; opacity:.75; margin:.2rem 0 .6rem; max-width:74ch;">
+            Your organisation&rsquo;s own allow and deny lists, as this replica actually
+            loaded them &mdash; not as the config names them. Names are shown in the form
+            the gate <em>matches</em>, which is normalised and may differ from the spelling
+            in the file. These are separate from the published-malware feed, and the feed
+            still wins: a package on both is refused.
+          </p>
+          {{ range .Policy.Lists }}
+            <div style="margin-bottom:.9rem;">
+              <div style="font-size:.85rem; margin-bottom:.25rem;">
+                <strong>{{ .Kind }}</strong>
+                &middot; <span class="mono">{{ .Path }}</span>
+                &middot; <span class="mono" style="opacity:.7;">sha256:{{ slice .Digest 0 12 }}</span>
+              </div>
+              {{ if .Names }}
+                <div class="mono" style="font-size:.85rem; line-height:1.6;">
+                  {{ range .Names }}<span style="display:inline-block; border:1px solid var(--line); border-radius:3px; padding:0 .35rem; margin:0 .25rem .25rem 0;">{{ . }}</span>{{ end }}
+                </div>
+                {{ if .Omitted }}
+                  <div style="font-size:.8rem; opacity:.75; margin-top:.2rem;">
+                    &hellip; and {{ .Omitted }} more not shown. The digest above covers
+                    <em>all</em> entries, so two replicas whose lists differ beyond this
+                    point still show as divergent.
+                  </div>
+                {{ end }}
+              {{ else if .Omitted }}
+                {{/* Names shed, entries LOADED. The gate drops list names from a heartbeat
+                     that would otherwise exceed the control plane's size cap (#139), so
+                     "no names" and "no entries" are different facts. Falling through to the
+                     branch below told an operator a list enforcing hundreds of entries had
+                     loaded ZERO and sent them to check a mount that was fine -- found by
+                     e2e/async_local.sh leg 28, not by the unit tests, which asserted the
+                     report and never rendered it. */}}
+                <div style="font-size:.85rem; opacity:.85;">
+                  <strong>{{ .Omitted }}</strong> entries are loaded and enforced. Their names
+                  are not shown: this replica&rsquo;s lists are long enough that naming them
+                  would make its health report too large for the control plane to accept, so
+                  it reports the count and the digest instead. Enforcement is unaffected, and
+                  the digest above still covers every entry.
+                </div>
+              {{ else }}
+                <div class="empty" style="font-size:.85rem;">
+                  Configured, but it loaded <strong>zero</strong> entries &mdash; which is
+                  not the same as having no list. Check the file this replica mounted.
+                </div>
+              {{ end }}
+            </div>
+          {{ end }}
+        {{ end }}
+
+        {{ if .Policy.Values }}
+          <h3 style="font-size:.9rem; opacity:.75; text-transform:uppercase; letter-spacing:.04em;">Settings</h3>
+          <table class="values">
+            <tbody>
+              {{ range $k, $v := .Policy.Values }}
+                <tr><td class="k">{{ $k }}</td><td class="mono">{{ $v }}</td></tr>
+              {{ end }}
+            </tbody>
+          </table>
+        {{ end }}
+      </section>
+    {{ end }}
+  {{ else }}
+    <p class="empty">No replica has reported a policy yet.</p>
+  {{ end }}
+
+  {{ if .Silent }}
+    <div class="banner">
+      <strong>{{ len .Silent }} replica{{ if ne (len .Silent) 1 }}s are{{ else }} is{{ end }} reporting a heartbeat but no policy</strong>
+      These are almost certainly running a build from before policy reporting existed.
+      They are still gating traffic &mdash; we simply cannot show what with.
+      <div class="replicas" style="margin-top:.5rem">
+        {{ range .Silent }}
+          <span class="r{{ if .Stale }} stale{{ end }}">
+            <span class="mono">{{ .Instance }}</span>
+            <span class="muted">{{ .Age }}</span>
+          </span>
+        {{ end }}
+      </div>
+    </div>
+  {{ end }}
+
+  <p class="note muted">
+    A replica is shown as not reporting after {{ .StaleAfter }} without a heartbeat.
+    Stale replicas are still listed &mdash; one that stopped reporting while still serving
+    traffic is the row worth looking at &mdash; but they are excluded from the
+    different-policies check above, so an instance retired long ago cannot leave that
+    warning permanently lit.
+  </p>
+  </details>
+
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

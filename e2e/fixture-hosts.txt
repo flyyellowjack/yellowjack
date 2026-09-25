@@ -1,0 +1,16 @@
+# Hosts a test fixture is allowed to name (issue #46) — read by scripts/fixture-hygiene.sh.
+#
+# Every host a fixture data file names must be defanged (.invalid/.example/.test, RFC 5737),
+# private, a single-label compose service name, or listed HERE with a reason. The reason is
+# not decoration: an entry without one fails the check, and so does an entry no fixture
+# uses any more. Format:  host   # why a fixture has to name the real thing
+#
+# Nothing here is a payload host. Each is a name the firewall VERIFIES or a schema
+# namespace — a fixture that named example.invalid instead would test our own mock rather
+# than the cross-check the fixture exists for. None is fetched by the fixture itself.
+
+github.com        # e2e/fakeupstream + testdata: the borrow-a-score claim must name a REAL repo, because deps.dev's record of it is what contradicts the lie (D33/D39); operator-list corpus names real repos for the same reason
+deps.dev          # e2e/fakeupstream: each fixture's description/summary field says which live deps.dev SOURCE_REPO record the claim is checked against (the README's table)
+maven.apache.org  # the POM's XML namespace (xmlns) — a schema identifier Maven never fetches
+repo.maven.apache.org # e2e/fakeupstream-maven/nginx.conf: the rig's fake Maven upstream proxies the artifact bodies it does not craft from Maven Central; the crafted POM/metadata are served locally. Central answers to repo1.maven.org too, but this is the name Maven's own super-POM carries and the one FW_UPSTREAM defaults to, so the rig and the product reach ONE host and docs/RUNNER_SETUP.md's outbound list stays complete
+registry.npmjs.org # e2e/registryfront/uplink.conf: the in-front/behind rig's nginx uplink IS the public registry for that topology — the whole measurement is what a real cache does when that upstream is cut, so it has to be the real one

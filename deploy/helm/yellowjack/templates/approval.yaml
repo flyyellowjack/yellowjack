@@ -1,0 +1,136 @@
+{{- if .Values.approval.enabled }}
+{{- $name := include "yellowjack.approval.name" . -}}
+{{- $port := int .Values.approval.service.port -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yellowjack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: approval
+spec:
+  replicas: {{ .Values.approval.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "yellowjack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: approval
+  template:
+    metadata:
+      labels:
+        {{- include "yellowjack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: approval
+      annotations:
+        checksum/env: {{ .Values.approval.env | toYaml | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: approval
+          image: {{ include "yellowjack.image" (dict "global" .Values.global "image" .Values.images.approval) | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: APPROVAL_LISTEN_ADDR
+              value: ":8090"
+            - name: APPROVAL_FLOW_RETENTION
+              value: {{ .Values.approval.flowRetention | quote }}
+            {{- if include "yellowjack.postgres.inUse" . }}
+            # The bundled database. The password is read from the Secret and the DSN is
+            # assembled from it HERE, with Kubernetes' own $(VAR) expansion, so the
+            # credential exists in exactly one place and a rotation is one edit.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "yellowjack.postgres.name" .) .Values.postgres.existingSecret }}
+                  key: POSTGRES_PASSWORD
+            - name: APPROVAL_DATABASE_URL
+              value: "postgres://postgres:$(POSTGRES_PASSWORD)@{{ include "yellowjack.postgres.name" . }}:5432/yellowjack?sslmode=disable"
+            {{- else if .Values.approval.database.existingSecret }}
+            - name: APPROVAL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.approval.database.existingSecret }}
+                  key: APPROVAL_DATABASE_URL
+            {{- else }}
+            - name: APPROVAL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}-database
+                  key: APPROVAL_DATABASE_URL
+            {{- end }}
+            {{- range $k, $v := .Values.approval.env }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.approval.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yellowjack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: approval
+spec:
+  # ClusterIP only, never exposed: this service has no authentication of its own, and
+  # docs/CONFIGURATION.md says so in bold. The NetworkPolicy narrows it further.
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $port }}
+      targetPort: http
+  selector:
+    {{- include "yellowjack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: approval
+{{- if and (not (include "yellowjack.postgres.inUse" .)) (not .Values.approval.database.existingSecret) .Values.approval.database.url }}
+---
+# The external DSN given inline in values, stored as a Secret rather than a plain env
+# value so it is not readable from `kubectl describe pod`. existingSecret is still the
+# better way to supply it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}-database
+  labels:
+    {{- include "yellowjack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: approval
+type: Opaque
+stringData:
+  APPROVAL_DATABASE_URL: {{ .Values.approval.database.url | quote }}
+{{- end }}
+{{- end }}

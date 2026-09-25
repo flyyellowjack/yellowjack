@@ -1,0 +1,230 @@
+# Yellow Jack — Helm chart values.
+#
+# READ THIS FIRST. The defaults below install a working EVALUATION stack: one npm gate,
+# the approval control plane, the console, and a bundled single-node Postgres. Three
+# things separate that from a production install, and each is marked ⚠️ where it lives:
+#
+#   1. gates[].upstream and gates[].publicURL — YOUR registry, and the URL your developers
+#      actually reach the gate at.
+#   2. postgres.enabled: false + approval.database.url — bring your own database.
+#   3. Image references — pushed to a registry your cluster can pull from (global.imageRegistry).
+#
+# WHAT IS EPHEMERAL AND WHAT IS DURABLE (D210). Every service here runs with a read-only
+# root filesystem and writes nothing of its own: application config is INJECTED (these
+# values → env + ConfigMaps) and a pod can be deleted and recreated with no loss. The ONE
+# durable thing is the approval database — audit and decision history — and that is the
+# half that belongs on replicated storage (postgres.storageClassName, or your own DB).
+
+global:
+  # Prefix prepended to EVERY image reference, e.g. "registry.internal:5000/mirror".
+  # Empty means images are pulled exactly as written below.
+  #
+  # This exists for the zero-egress posture: a cluster that cannot reach the public
+  # internet mirrors these images once and points the chart at the mirror, and no
+  # template hardcodes a public path that would break that.
+  imageRegistry: ""
+  imagePullSecrets: []
+  #  - name: regcred
+
+images:
+  # ⚠️ No public image is published before launch. Build from the repo Dockerfiles and
+  # push to a registry your cluster can pull from, then set repository/tag (and digest —
+  # a tag is a mutable pointer; the digest is what pins what you tested).
+  firewall:
+    repository: yellowjack/firewall
+    tag: dev
+    digest: ""
+  approval:
+    repository: yellowjack/approval
+    tag: dev
+    digest: ""
+  console:
+    repository: yellowjack/console
+    tag: dev
+    digest: ""
+  # The bundled evaluation database. PINNED BY DIGEST, like every external image in this
+  # repository (#22): scripts/pinned-images.sh checks this block.
+  postgres:
+    repository: postgres
+    tag: "17"
+    digest: "sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675"
+
+imagePullPolicy: IfNotPresent
+
+# ── The gates ─────────────────────────────────────────────────────────────────────
+#
+# ONE GATE SPEAKS ONE PROTOCOL. FW_ECOSYSTEM picks the parser and the identity rules, so
+# an organisation with npm and container traffic runs two gates — two entries here, two
+# Deployments, two Services — from the same image. That is the shape D210 asks for and it
+# is also what a real deployment looks like.
+gates:
+  - name: npm
+    ecosystem: npm
+    # ⚠️ CHANGE THIS: the address of YOUR registry (Verdaccio, Nexus, Artifactory,
+    # CodeArtifact, a GitLab package registry). The gate sits IN FRONT of it.
+    upstream: https://registry.npmjs.org
+    # ⚠️ The URL developers reach this gate at. The gate mints artifact URLs from it, so
+    # it must be reachable FROM WHERE THE CLIENT RUNS. Empty = the in-cluster Service
+    # address, which is right for clients inside the cluster and wrong for a laptop;
+    # set it to your Ingress URL for the latter. Leaving it unset entirely makes URLs
+    # depend on each request's Host header, which lands in lockfiles (#19).
+    publicURL: ""
+    replicas: 2
+    # Operator lists. One name per line; the same format the reference deployment
+    # documents. Mounted as a DIRECTORY, so edits (a `helm upgrade`) reach the running
+    # gate without a restart rather than pinning a stale inode -- after your kubelet's
+    # next sync (1 min by default) plus the gate's 5-second reload: measured 50-76 s on
+    # kind, with pods on different nodes disagreeing for 10-20 s (e2e/helm_list_drill.sh).
+    lists:
+      allow: |
+        # Packages always served without scoring. Ships empty on purpose.
+      deny: |
+        # Packages refused outright. Put your internal package names here so a public
+        # package claiming one of them is refused (dependency confusion).
+    # Any FW_* setting, verbatim. Every one is documented in docs/CONFIGURATION.md;
+    # zero are required (the config surface is 0-required by design).
+    env:
+      # `off`, not `stub`: the chart gates rollout on /readyz, and D273 makes `stub`
+      # report NOT READY -- it fabricates a flat 7.5 rather than declining to score.
+      # Leaving `stub` here would ship a chart whose pods never become ready.
+      FW_SCORECARD_MODE: "off"
+      FW_SCORE_THRESHOLD: "0.0"
+      FW_MODE: enforce
+      # Refuse releases younger than this many days. 14 is the product default (D335);
+      # 0 turns it off. The one control that needs neither a list nor a scanner (D192).
+      FW_MIN_RELEASE_AGE_DAYS: "14"
+    service:
+      type: ClusterIP
+      port: 8080
+    resources:
+      requests: { cpu: 50m, memory: 32Mi }
+      limits: { memory: 128Mi }
+  # A container gate looks like this. Uncomment to run one beside the npm gate.
+  # - name: oci
+  #   ecosystem: oci
+  #   upstream: http://harbor.internal   # your container registry, in pull-through mode
+  #   publicURL: ""
+  #   replicas: 2
+  #   lists:
+  #     allow: ""
+  #     deny: |
+  #       # An entry covers the WHOLE repository, every tag (#128).
+  #   env:
+  #     FW_SCORECARD_MODE: "off"
+  #     FW_SCORE_THRESHOLD: "0.0"
+  #     # No FW_MIN_RELEASE_AGE_DAYS for images: a registry publishes no trustworthy
+  #     # push time and real images report the 1970 epoch (#127).
+  #   service: { type: ClusterIP, port: 8080 }
+
+# ── Approval control plane ────────────────────────────────────────────────────────
+approval:
+  enabled: true
+  # Stateless apart from the database, so it scales horizontally. "Config database is
+  # bootstrapped" (D210): every replica runs the schema migration at start, and
+  # e2e/ha_drill.sh leg 8 is what shows N of them doing so at the same moment.
+  replicas: 1
+  database:
+    # ⚠️ PRODUCTION: a Postgres DSN for a database you run and back up, e.g.
+    #   postgres://yellowjack:...@db.internal:5432/yellowjack?sslmode=require
+    # When set, the bundled postgres below is ignored even if enabled.
+    url: ""
+    # Or the name of an existing Secret with key APPROVAL_DATABASE_URL. Preferred over
+    # `url`, which puts a credential in values.
+    existingSecret: ""
+  # Retention of per-package flow buckets; operator-configurable, never tiered (D88).
+  flowRetention: 336h
+  env: {}
+  service:
+    port: 8090
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+# ── Bundled Postgres — EVALUATION GRADE ───────────────────────────────────────────
+#
+# A single StatefulSet replica with one PersistentVolumeClaim. It exists so that
+# `helm install` works out of the box. It is NOT the production answer: run your own
+# database, or an operator, and point approval.database at it.
+postgres:
+  enabled: true
+  # The StorageClass for the audit/decision history — the DURABLE half (D210).
+  #
+  # Empty means the cluster default. Rook/Ceph is the RECOMMENDED production answer
+  # because it keeps this data on more than one node; it is not required to install
+  # the chart, and the chart does not care which class name satisfies the claim.
+  storageClassName: ""
+  size: 5Gi
+  # An existing Secret with key POSTGRES_PASSWORD. Empty generates one on first
+  # install and keeps it across upgrades (see templates/secret.yaml).
+  existingSecret: ""
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+# ── Console ───────────────────────────────────────────────────────────────────────
+console:
+  enabled: true
+  replicas: 1
+  # Both set = the write path is on (approve/deny). Either empty = the console is
+  # READ-ONLY, which is the right default while you evaluate. Prefer existingSecret
+  # (keys CONSOLE_AUTH_USER, CONSOLE_AUTH_PASS) to values. List EDITS are not a console
+  # feature on this chart: they need CONSOLE_LIST_REPO, which is not wired here, so the
+  # console hides its list editor and lists are edited with `helm upgrade` (the gates
+  # read them from a ConfigMap).
+  auth:
+    user: ""
+    password: ""
+    existingSecret: ""
+  env: {}
+  service:
+    type: ClusterIP
+    port: 8085
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+# ── Not shipped here, and why ─────────────────────────────────────────────────────
+scheduler:
+  # The scan scheduler launches scanner containers through the DOCKER socket
+  # (docker-run / docker-api launchers). There is no Kubernetes Job launcher yet — it
+  # is the deferred third implementation (D133, #80) — so enabling this on Kubernetes
+  # would mean mounting the node's Docker socket into a pod, which is host root. Off
+  # until the Job launcher exists; the gates run fine without it (scoring is `off`
+  # above, so no scanner is ever called and nothing here is missing).
+  enabled: false
+cache:
+  # Out of scope permanently (D151): the customer's registry is the cache.
+  enabled: false
+
+# ── Hardening defaults (#22) ─────────────────────────────────────────────────────
+#
+# The same posture e2e/hardening.sh proves every service runs under: non-root with an
+# ARBITRARY uid, read-only root filesystem, no privilege escalation, every capability
+# dropped. These apply to our own images; postgres has its own below.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+postgresSecurityContext:
+  runAsUser: 999
+  runAsGroup: 999
+  fsGroup: 999
+
+# Restrict approval (which has no authentication of its own) to the gates and the
+# console. Requires a CNI that enforces NetworkPolicy; harmless where none does.
+networkPolicy:
+  enabled: true
+
+nameOverride: ""
+fullnameOverride: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}

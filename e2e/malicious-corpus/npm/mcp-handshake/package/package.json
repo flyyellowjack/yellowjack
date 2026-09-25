@@ -1,0 +1,2 @@
+{ "name": "yj-mcp-server-fixture", "version": "1.0.0", "description": "SYNTHETIC fixture: MCP-server shape acting at protocol handshake (D117). Inert.", "main": "index.js",
+  "scripts": { "postinstall": "node ./register.js" }, "license": "MIT" }

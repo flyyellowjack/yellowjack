@@ -1,0 +1,30 @@
+graph TB
+    subgraph clients["Clients"]
+        dev["Developers / CI Runners<br/>(npm, PyPI, Docker, ...)"]
+    end
+
+    subgraph app["Application (self-hosted, per-customer)"]
+        cache["Cache / Local Repo Service<br/>(optional front door,<br/>separate microservice)"]
+        fw["Firewall / Proxy Service<br/>(stateless, multithreaded)<br/>multi-protocol: npm, PyPI, OCI..."]
+        scorecard["Decision Engine<br/>(OSS Scorecard +<br/>future analysis)"]
+        db[("Database<br/>(stateful, crash-safe:<br/>users, policy, audit)")]
+        store[("Object Store<br/>(cached artifacts +<br/>internal packages)")]
+    end
+
+    subgraph external["External / Upstream"]
+        registries["Public Registries<br/>(npmjs, PyPI, Docker Hub)"]
+        repos["Source Repos<br/>(GitHub, etc.)"]
+    end
+
+    dev -->|"want caching:<br/>request via cache"| cache
+    dev -.->|"firewall only:<br/>request direct"| fw
+    cache -->|"forward on miss"| fw
+    cache <--> store
+    fw --> scorecard
+    scorecard --> repos
+    fw -->|"allow: fetch"| registries
+    fw --> db
+
+    config["Config<br/>(injected at runtime)"]
+    config -.-> cache
+    config -.-> fw

@@ -1,0 +1,15 @@
+# Keep the Docker build context small and clean. Anything listed here is NOT
+# sent to the Docker daemon, so it can't accidentally end up in an image layer.
+
+# Local build artifacts (we rebuild inside the container anyway).
+*.exe
+yellowjack
+
+# The worked reference implementation — not part of our build.
+reference/
+
+# Docs, diagrams, and project metadata are irrelevant to the runtime image.
+docs/
+*.md
+.git/
+.gitignore

@@ -1,0 +1,28 @@
+apiVersion: v2
+name: yellowjack
+description: >-
+  Yellow Jack package firewall: one gate per ecosystem in front of your own registry,
+  an approval control plane, and a console. Self-hosted, zero-egress by default.
+type: application
+# Chart version. Bumped on every change to the templates or defaults.
+version: 0.1.0
+# The application has no tagged release yet (CHANGELOG is [Unreleased]); the string
+# says so rather than inventing a number that would look like one.
+appVersion: "0.0.0-unreleased"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - package-firewall
+  - supply-chain
+  - npm
+  - pypi
+  - maven
+  - oci
+home: https://github.com/flyyellowjack/yellowjack
+sources:
+  - https://github.com/flyyellowjack/yellowjack
+maintainers:
+  - name: Yellow Jack
+annotations:
+  # D210: Kubernetes/Helm is the ASSUMED packaging; a single container is the floor.
+  # Application config state is ephemeral; audit/decision history is the durable half.
+  yellowjack.io/decision: "D210"

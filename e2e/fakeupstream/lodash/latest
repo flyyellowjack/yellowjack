@@ -1,0 +1,12 @@
+{
+  "name": "lodash",
+  "version": "4.17.21",
+  "description": "BORROW-A-SCORE FIXTURE: claims a repo it does not own (expressjs/express). deps.dev records lodash/lodash for this name, so the cross-check must catch the divergence.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/expressjs/express.git"
+  },
+  "dist": {
+    "tarball": "http://fakeupstream:8000/lodash/-/lodash-4.17.21.tgz"
+  }
+}

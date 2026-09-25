@@ -1,0 +1,12 @@
+# Keep shell scripts and the Makefile LF so they run in CI (Linux) and Git Bash.
+# A CRLF in a `#!/usr/bin/env sh` script fails on Linux ("bad interpreter").
+*.sh        text eol=lf
+Makefile    text eol=lf
+
+# BUILD_LOG.md is append-only and every session adds an entry, so concurrent
+# merges collide on the shared tail line. `union` keeps both sides automatically
+# (a git built-in driver, no command execution). See #119.
+docs/BUILD_LOG.md merge=union
+
+# A signed snapshot is valid only byte-for-byte: no line-ending conversion, ever (#157).
+e2e/feed-fetch-fixture/** -text

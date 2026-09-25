@@ -1,0 +1,129 @@
+{{- if .Values.console.enabled }}
+{{- $name := include "yellowjack.console.name" . -}}
+{{- $port := int .Values.console.service.port -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yellowjack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      {{- include "yellowjack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: console
+  template:
+    metadata:
+      labels:
+        {{- include "yellowjack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: console
+      annotations:
+        checksum/env: {{ .Values.console.env | toYaml | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: console
+          image: {{ include "yellowjack.image" (dict "global" .Values.global "image" .Values.images.console) | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8085
+          env:
+            # The console's own default is 127.0.0.1:8085 -- loopback, deliberately, for a
+            # host install. Inside a pod loopback is unreachable through the Service, so
+            # the chart binds all interfaces and relies on ClusterIP for reach.
+            - name: CONSOLE_LISTEN_ADDR
+              value: ":8085"
+            - name: CONSOLE_APPROVAL_URL
+              value: {{ include "yellowjack.approval.url" . | quote }}
+            {{- if .Values.console.auth.existingSecret }}
+            - name: CONSOLE_AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.console.auth.existingSecret }}
+                  key: CONSOLE_AUTH_USER
+            - name: CONSOLE_AUTH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.console.auth.existingSecret }}
+                  key: CONSOLE_AUTH_PASS
+            {{- else if and .Values.console.auth.user .Values.console.auth.password }}
+            - name: CONSOLE_AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}-auth
+                  key: CONSOLE_AUTH_USER
+            - name: CONSOLE_AUTH_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}-auth
+                  key: CONSOLE_AUTH_PASS
+            {{- end }}
+            {{- range $k, $v := .Values.console.env }}
+            - name: {{ $k }}
+              value: {{ $v | toString | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.console.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yellowjack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  type: {{ .Values.console.service.type }}
+  ports:
+    - name: http
+      port: {{ $port }}
+      targetPort: http
+  selector:
+    {{- include "yellowjack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+{{- if and (not .Values.console.auth.existingSecret) .Values.console.auth.user .Values.console.auth.password }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}-auth
+  labels:
+    {{- include "yellowjack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+type: Opaque
+stringData:
+  CONSOLE_AUTH_USER: {{ .Values.console.auth.user | quote }}
+  CONSOLE_AUTH_PASS: {{ .Values.console.auth.password | quote }}
+{{- end }}
+{{- end }}

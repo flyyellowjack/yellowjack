@@ -1,0 +1,23 @@
+# Packages this organisation refuses, whatever anyone else says about them.
+#
+# One name per line; blank lines and #-comments ignored. Names are normalised the
+# same way the malware feed normalises them, so writing "Left-Pad" still matches
+# "left-pad". Re-read every 5 seconds while the gate runs — editing this file does
+# NOT need a restart, and a failed read keeps the last good list rather than
+# failing open.
+#
+# This list BEATS the allow list below it, and it beats everything else: a name
+# here is refused without one packet leaving your network.
+#
+# TWO REASONS TO PUT A NAME HERE
+#
+#   1. You have decided against a package. A licence call, a duplicate of
+#      something internal, a maintainer you do not want to depend on.
+#
+#   2. DEPENDENCY CONFUSION. If you publish internal packages, put their names
+#      here so a PUBLIC package claiming one of those names is refused. No public
+#      data can detect that for you — a private name is absent from every public
+#      index by construction — but you know your own namespace.
+#
+# The example below is here so the walkthrough has something to refuse. Delete it.
+left-pad

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Downloads by source IP</title>
+  {{ template "head" }}
+  <style>
+    .ipnote { font-size: .78rem; margin: -.5rem 0 1rem; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Downloads by source</h1>
+      <p class="sub">Who pulled a package, and how often, by the connecting host the gate observed.</p>
+    </div>
+    <div class="aside">{{ .DistinctIPs }} source(s){{ if .AuthUser }} · {{ .AuthUser }}{{ end }}</div>
+  </header>
+  {{ template "audittabs" "downloads" }}
+
+  <form class="filters" method="get" action="/downloads">
+    <input type="text" name="package" placeholder="package…" value="{{ .Filter.Package }}">
+    <input type="text" name="ecosystem" placeholder="ecosystem (npm/pypi/oci)…" value="{{ .Filter.Ecosystem }}">
+    <select name="action">
+      <option value="">any verdict</option>
+      <option value="allow" {{ if eq .Filter.Action "allow" }}selected{{ end }}>allow</option>
+      <option value="block" {{ if eq .Filter.Action "block" }}selected{{ end }}>block</option>
+    </select>
+    <button type="submit">Search</button>
+    {{ if .Filter.Active }}<a class="clear" href="/downloads">clear</a>{{ end }}
+  </form>
+
+  {{ if .Rows }}
+  <p class="summary"><strong>{{ .TotalPulls }}</strong> pull(s) from <strong>{{ .DistinctIPs }}</strong> source(s){{ if .Filter.Package }} for <span class="ip">{{ .Filter.Package }}</span>{{ end }}.</p>
+  <p class="ipnote muted">A source is the connecting host we observed — behind NAT, a CI runner, or a shared egress it is a gateway shared by many people, so treat it as <em>which host</em>, not <em>who</em>. It is personal data. <code>(unobserved)</code> = pulls we could not attribute to a source.</p>
+  <table>
+    <thead>
+      <tr><th>Source</th><th>Downloads</th><th>Last seen</th></tr>
+    </thead>
+    <tbody>
+      {{ range .Rows }}
+      <tr>
+        <td>{{ if .IsIP }}<span class="ip">{{ .Source }}</span>{{ else }}<span class="muted">{{ .Source }}</span>{{ end }}</td>
+        <td class="num">{{ .Count }}</td>
+        <td class="muted num">{{ .LastAt.UTC.Format "2006-01-02 15:04:05 UTC" }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else if .Filter.Active }}
+  <p class="empty">No pulls match this filter. <a href="/downloads">Clear it</a> to see all sources.</p>
+  {{ else }}
+  <p class="empty">No downloads recorded yet. Rows appear here as the firewall allows or blocks packages, once source IPs are being observed (#41).</p>
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

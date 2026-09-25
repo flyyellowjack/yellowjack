@@ -1,0 +1,36 @@
+Yellow Jack {{ .Chart.Version }} ({{ .Chart.AppVersion }}) is installed in {{ .Release.Namespace }}.
+
+GATES (one per ecosystem; a developer's client points at these):
+{{- range .Values.gates }}
+{{- $name := include "yellowjack.gate.name" (dict "root" $ "gate" .) }}
+  {{ .ecosystem | printf "%-6s" }}  http://{{ $name }}:{{ dig "service" "port" 8080 . }}   ({{ default 2 .replicas }} replicas, upstream {{ .upstream }})
+{{- if not .publicURL }}
+         ⚠️ publicURL is unset: artifact URLs are minted from the in-cluster address above.
+            Right for clients inside the cluster; set gates[].publicURL to your Ingress URL
+            for anything outside it (#19).
+{{- end }}
+{{- end }}
+
+{{- if .Values.console.enabled }}
+
+CONSOLE (ClusterIP, not exposed):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "yellowjack.console.name" . }} 8085:{{ .Values.console.service.port }}
+  open http://localhost:8085/audit
+{{- if not (or .Values.console.auth.existingSecret (and .Values.console.auth.user .Values.console.auth.password)) }}
+  Running READ-ONLY (no console.auth set) -- the right default while evaluating.
+{{- end }}
+{{- end }}
+
+{{- if include "yellowjack.postgres.inUse" . }}
+
+DATABASE: the bundled EVALUATION postgres ({{ .Values.postgres.size }} on {{ default "the cluster default StorageClass" .Values.postgres.storageClassName }}).
+  This is the one durable thing here: audit and decision history. For production, run your
+  own database and set approval.database.url (or .existingSecret); Rook/Ceph is the
+  recommended StorageClass if you keep the bundle, so the data lives on more than one node.
+{{- end }}
+
+Every service runs read-only, non-root, with all capabilities dropped. Application config is
+injected from these values and never persisted; delete any pod and it comes back identical.
+
+Never apply `helm template` output by hand: the generated database password is only kept
+stable across upgrades by a real install (templates/secret.yaml explains).

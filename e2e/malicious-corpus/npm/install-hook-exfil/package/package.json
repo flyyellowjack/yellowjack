@@ -1,0 +1,2 @@
+{ "name": "yj-install-hook-exfil", "version": "1.0.0", "description": "SYNTHETIC fixture: install-hook shape. Inert.", "main": "index.js",
+  "scripts": { "postinstall": "node ./collect.js" }, "license": "MIT" }

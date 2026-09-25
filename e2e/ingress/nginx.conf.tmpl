@@ -1,0 +1,29 @@
+# TLS termination in front of a Yellow Jack gate (docs/SETUP.md, "Serving the gate over HTTPS").
+#
+# This file is the one e2e/ingress_tls_test.go runs, with ${GATE} replaced by the gate's
+# address, and the one docs/SETUP.md prints: ingressdoc_test.go fails if they drift apart.
+# Every directive below is here for a stated reason; none is decoration.
+server {
+    listen 443 ssl;
+
+    # Your certificate, for the name developers will put in their client config. The
+    # gate never sees it: TLS ends here.
+    ssl_certificate     /etc/nginx/tls/tls.crt;
+    ssl_certificate_key /etc/nginx/tls/tls.key;
+
+    # Artifacts are large and the gate streams them. Buffering them to disk here would
+    # add a copy and a size limit the gate itself does not have.
+    client_max_body_size    0;
+    proxy_buffering         off;
+    proxy_request_buffering off;
+
+    location / {
+        proxy_pass http://${GATE};
+
+        # The gate records the puller's address. Behind a proxy that is this proxy's
+        # address unless you pass the real one on AND list this proxy in
+        # FW_TRUSTED_PROXIES; the header alone is ignored, by design.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Host            $http_host;
+    }
+}

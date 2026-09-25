@@ -1,0 +1,25 @@
+# Packages this organisation always serves, without scoring them.
+#
+# Same format and the same 5-second reload as deny.txt. Ships EMPTY on purpose: an
+# allow list is a hole you open deliberately, never one you inherit from an example
+# file. Configured-and-empty is not the same as unset, and the console's policy page
+# shows which of the two you are in.
+#
+# What it is for: your own internal packages, and the occasional third-party one you
+# have already reviewed and do not want re-litigated by a gate on every pull.
+#
+# WHAT IT DOES NOT DO — worth knowing before you rely on it:
+#
+#   - It does NOT beat the deny list. Put a name on both and the pull returns 403
+#     with rule "deny-list:<name>", and the gate logs the override by name:
+#       POLICY "<name>" is on BOTH operator lists -- REFUSED: the deny list
+#       outranks the allow list.
+#     So if you add a name here and it is still refused, the log tells you why and
+#     deny.txt is the file to edit. (That line was missing until #124; before it,
+#     the only trace was the rule name on the 403.)
+#   - It does NOT beat a published malware advisory. An operator who allow-listed
+#     something later reported as malware is told THAT, not handed the package.
+#
+# Add a name by writing it on its own line:
+#
+#   @your-org/internal-sdk

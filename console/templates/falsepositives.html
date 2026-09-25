@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — False-Positive Reports</title>
+  {{ template "head" }}
+  <style>
+    .saved { background: var(--ok-soft); color: var(--ok); padding: .4rem .7rem; border-radius: 4px;
+             font-size: .9rem; margin-bottom: 1rem; display: inline-block; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>False-positive reports</h1>
+      <p class="sub">Blocks your organisation has judged to be wrong.</p>
+    </div>
+    <div class="aside">{{ len .Reports }} report(s){{ if .AuthUser }} · {{ .AuthUser }}{{ end }}</div>
+  </header>
+  {{ template "audittabs" "false-positives" }}
+
+  {{ if .Saved }}<div class="saved">Report #{{ .Saved }} recorded.</div>{{ end }}
+
+  <p class="why">
+    Blocks your organisation has judged to be <em>wrong</em>, reported from the audit log.
+    These are your own records and stay here: nothing leaves this deployment unless the
+    control plane has been configured with a forwarding destination. A report does not
+    change enforcement — to serve the package, add it to the allow list on
+    <a href="/lists">Operator lists</a>. <strong>Advisory</strong> means the block came from the
+    published-malware feed; <strong>operator</strong> means it came from this organisation&rsquo;s own
+    deny list or a human ruling. The two are different mistakes with different fixes.
+  </p>
+
+  {{ if .Reports }}
+  <table>
+    <thead>
+      <tr><th>Reported</th><th>Package</th><th>Ecosystem</th><th>Blocked by</th><th>Rule</th><th>Reason shown</th><th>Note</th><th>By</th></tr>
+    </thead>
+    <tbody>
+      {{ range .Reports }}
+      <tr>
+        <td class="muted num">{{ .At.UTC.Format "2006-01-02 15:04 UTC" }}</td>
+        <td class="pkg">{{ .Package }}</td>
+        <td>{{ if .Ecosystem }}{{ .Ecosystem }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td><span class="badge {{ .SourceKind }}">{{ .SourceKind }}</span>{{ if and .Source (ne .SourceKind .Source) }} <span class="muted">{{ .Source }}</span>{{ end }}</td>
+        <td>{{ if .Rule }}<span class="pkg">{{ .Rule }}</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td>{{ if .Reason }}{{ .Reason }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td>{{ if .Note }}{{ .Note }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td>{{ if .ReportedBy }}{{ .ReportedBy }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else if .WritesEnabled }}
+  <p class="empty">No false positives reported yet. Each block on the <a href="/audit">audit log</a> has a report form.</p>
+  {{ else }}
+  <p class="empty">No reports, and none can be filed: reporting needs a signed-in operator so a report is attributed. Configure a console credential or OIDC to enable it.</p>
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

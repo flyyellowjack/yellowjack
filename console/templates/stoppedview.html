@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Why {{ .Event.Package }} was stopped</title>
+  {{ template "head" }}
+  <style>
+    .back { font-size: 13px; font-weight: 600; text-decoration: none; align-self: flex-start; }
+    .hero { display: flex; align-items: center; gap: 18px; padding: 24px 28px; flex-wrap: wrap; }
+    .hero .icon { width: 52px; height: 52px; border-radius: 12px; display: flex; align-items: center;
+                  justify-content: center; flex-shrink: 0; background: var(--warn-soft); color: var(--warn); }
+    .hero .icon.block { background: var(--danger-soft); color: var(--danger); }
+    .hero .icon.operator { background: var(--info-soft); color: var(--info); }
+    .hero .what { display: flex; flex-direction: column; gap: 4px; flex-grow: 1; min-width: 0; }
+    .hero .kicker { font-size: 13px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; color: var(--warn); }
+    .hero .kicker.block { color: var(--danger); }
+    .hero .kicker.operator { color: var(--info); }
+    .hero h1 { margin: 0; font-family: var(--mono); font-size: 26px; font-weight: 500; overflow-wrap: anywhere; }
+    .hero .meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 13px; color: var(--muted); }
+    .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+    .cols > .main-col { grid-column: span 2; display: flex; flex-direction: column; gap: 16px; }
+    .cols > aside { display: flex; flex-direction: column; gap: 16px; }
+    .panel { padding: 22px 26px; display: flex; flex-direction: column; gap: 10px; }
+    .panel h2 { margin: 0; font-size: 16px; }
+    .panel p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+    .panel .words { font-size: 13px; color: var(--muted); font-family: var(--mono); overflow-wrap: anywhere; }
+    .instead { background: var(--ok-soft); border-color: var(--ok-line); }
+    .instead h2 { color: var(--ok-ink); }
+    .facts { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; }
+    .facts div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .facts dt { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .facts dd { margin: 0; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+    .who { display: flex; justify-content: space-between; font-size: 14px; gap: 12px; }
+    .who .h { font-family: var(--mono); }
+    .fine { font-size: 13px; line-height: 1.55; color: var(--muted); margin: 0; }
+    .override { border-color: var(--danger-line); }
+    .override form { display: flex; flex-direction: column; gap: 10px; }
+    .override input[type=text] { width: 100%; font-family: var(--mono); }
+    .fp input[type=text] { width: 100%; }
+    .fp form { display: flex; flex-direction: column; gap: 10px; }
+    @media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } .cols > .main-col { grid-column: auto; } }
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <a class="back" href="/stopped">← Back to everything stopped</a>
+
+  <header class="card hero">
+    <div class="icon {{ .KindClass }}" aria-hidden="true">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 7v5c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V7l-9-4Z"></path><path d="m9 9 6 6M15 9l-6 6"></path></svg>
+    </div>
+    <div class="what">
+      <span class="kicker {{ .KindClass }}">{{ if .Served }}Logged · {{ else }}Blocked · {{ end }}{{ .KindLabel }}</span>
+      <h1>{{ .Event.Package }}</h1>
+    </div>
+    <div class="meta">
+      <span>{{ if .Ecosystem }}{{ .Ecosystem }} · {{ end }}{{ .When }}</span>
+      <span>{{ if .Hosts }}Requested from {{ .Hosts }} host{{ if ne .Hosts 1 }}s{{ end }}{{ else }}No source host recorded{{ end }}</span>
+    </div>
+  </header>
+
+  <div class="cols">
+    <div class="main-col">
+      <section class="card panel" aria-labelledby="wh">
+        <h2 id="wh">What happened</h2>
+        <p>{{ .Happened }}{{ if .Served }} This gate runs in report mode, so the package was logged and then served.{{ end }}</p>
+        {{ if .Event.Reason }}<span class="words">The gate&rsquo;s own words: {{ .Event.Reason }}</span>{{ end }}
+      </section>
+
+      {{ if .Instead }}
+      <section class="card panel instead" aria-labelledby="dn">
+        <h2 id="dn">What to do instead</h2>
+        <p>{{ .Instead }}</p>
+        {{ if .InsteadHref }}<a class="btn" href="{{ .InsteadHref }}" style="align-self:flex-start">{{ .InsteadLabel }}</a>{{ end }}
+      </section>
+      {{ end }}
+
+      {{ if .Facts }}
+      <section class="card panel" aria-labelledby="ev">
+        <h2 id="ev">Why the gate decided</h2>
+        <dl class="facts">
+          {{ range .Facts }}<div><dt>{{ .Label }}</dt><dd>{{ .Value }}</dd></div>{{ end }}
+        </dl>
+      </section>
+      {{ end }}
+    </div>
+
+    <aside>
+      <section class="card panel" aria-labelledby="wt">
+        <h2 id="wt" style="font-size:15px">Who asked for it</h2>
+        {{ range .Attempts }}<div class="who"><span class="h">{{ .Host }}</span><span class="muted">{{ .When }}</span></div>
+        {{ else }}<p class="fine">No source host was recorded for these requests.</p>{{ end }}
+        <p class="fine">Hosts, not people: the gate records the connecting address. Behind NAT or a CI runner, one address is many people.</p>
+      </section>
+
+      <section class="card panel override" aria-labelledby="ov">
+        <h2 id="ov" style="font-size:15px">Administrator override</h2>
+        {{ if eq .Override "pin" }}
+          <p class="fine">You can allow one release anyway by pinning it on the allow list. A pinned release outranks the advisory for that release only (D312). The change is a commit in the lists&rsquo; history, under your name.</p>
+          {{ if .CanEditList }}
+          <form method="post" action="/lists">
+            <input type="hidden" name="kind" value="allow">
+            <input type="hidden" name="action" value="add">
+            <input type="text" name="entry" value="{{ .PinTemplate }}" aria-label="The release to allow" spellcheck="false" autocomplete="off">
+            <button class="danger big" type="submit">Allow this release anyway</button>
+          </form>
+          {{ else }}<p class="fine">{{ .ListsNote }}</p>{{ end }}
+        {{ else if eq .Override "unlist" }}
+          <p class="fine">Take it off your block list. The change is a commit in the lists&rsquo; history, under your name; the gates pick it up within seconds.</p>
+          {{ if .CanEditList }}
+          <form method="post" action="/lists">
+            <input type="hidden" name="kind" value="deny">
+            <input type="hidden" name="action" value="remove">
+            <input type="hidden" name="entry" value="{{ .Event.Package }}">
+            <button class="danger big" type="submit">Remove from the block list</button>
+          </form>
+          {{ else }}<p class="fine">{{ .ListsNote }}</p>{{ end }}
+        {{ else if eq .Override "rule" }}
+          <p class="fine">A person rules on this in Decisions. An allow there covers every version of the package.</p>
+          {{ if .InsteadHref }}<a class="btn" href="{{ .InsteadHref }}">Go to Decisions</a>{{ end }}
+        {{ else }}
+          <p class="fine">There is no override for this kind of refusal. Change the policy that produced it instead.</p>
+        {{ end }}
+      </section>
+
+      {{ if .CanWrite }}
+      <section class="card panel fp" aria-labelledby="fp">
+        <h2 id="fp" style="font-size:15px">Was this wrong?</h2>
+        <p class="fine">Record it as a false positive. It stays in this deployment and does not change enforcement.</p>
+        <form method="post" action="/report-false-positive">
+          <input type="hidden" name="event_id" value="{{ .Event.ID }}">
+          <input type="hidden" name="package" value="{{ .Event.Package }}">
+          <input type="hidden" name="ecosystem" value="{{ .Event.Ecosystem }}">
+          <input type="hidden" name="action" value="{{ .Event.Action }}">
+          <input type="hidden" name="reason" value="{{ .Event.Reason }}">
+          <input type="hidden" name="source" value="{{ .Event.Source }}">
+          <input type="hidden" name="deny_kind" value="{{ .Event.DenyKind }}">
+          <input type="hidden" name="rule" value="{{ .Event.Rule }}">
+          <input type="text" name="note" placeholder="Why this block was wrong" maxlength="4096" aria-label="Why this block was wrong">
+          <button type="submit">Report a false positive</button>
+        </form>
+      </section>
+      {{ end }}
+    </aside>
+  </div>
+</main>
+</div>
+</body>
+</html>

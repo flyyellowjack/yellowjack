@@ -1,0 +1,48 @@
+# A PROJECTION of the ossf/scorecard repository's docs/checks/internal/checks.yaml (main
+# branch, fetched 2026-09-21):
+# each check's name and its documented `risk:` level, nothing else. The full file's prose
+# names live hosts, which this repo's fixture guard forbids, and the test that reads this
+# (TestTheDefaultRequiredSetIsScorecardsOwnRiskLevels) consumes only these two fields.
+# To refresh: re-fetch upstream, re-project, and re-run the test; a re-rated check then
+# reddens the default required set on purpose.
+checks:
+  Maintained:
+    risk: High
+  Dependency-Update-Tool:
+    risk: High
+  Binary-Artifacts:
+    risk: High
+  Branch-Protection:
+    risk: High
+  CI-Tests:
+    risk: Low
+  CII-Best-Practices:
+    risk: Low
+  Code-Review:
+    risk: High
+  Contributors:
+    risk: Low
+  Fuzzing:
+    risk: Medium
+  Packaging:
+    risk: Medium
+  Pinned-Dependencies:
+    risk: Medium
+  SAST:
+    risk: Medium
+  SBOM:
+    risk: Medium
+  Security-Policy:
+    risk: Medium
+  Signed-Releases:
+    risk: High
+  Token-Permissions:
+    risk: High
+  Vulnerabilities:
+    risk: High
+  Dangerous-Workflow:
+    risk: Critical
+  License:
+    risk: Low
+  Webhooks:
+    risk: Critical

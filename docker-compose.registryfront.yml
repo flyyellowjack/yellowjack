@@ -1,0 +1,236 @@
+# E2E override for the REGISTRY-IN-FRONT topology (#98, D177). Layer on the base:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.registryfront.yml up -d --build \
+#     uplink custreg-front custreg-behind approval postgres firewall-front firewall-behind \
+#     firewall-oci-behind custreg-oci-behind
+#
+# Driver: e2e/registry_front.sh
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT THIS RIG EXISTS TO MEASURE
+#
+# D177 (2026-08-23) inverted the topology this project was built around:
+#
+#   OLD (D151):  client -> their registry -> [miss] -> Yellow Jack -> public registry
+#   NEW (D177):  client -> Yellow Jack -> their registry -> public registry
+#
+# and the reason is ENFORCEMENT, not elegance. From BEHIND, a cache hit never reaches
+# us, so a verdict cannot land on anything the registry already holds; from in front,
+# every pull is seen and judged, and a cached package can still be withdrawn.
+#
+# D290 then made the position a deployment CHOICE: the two stop different events (in
+# front, the install; behind, ingest), and neither dominates. Both are wired here, and
+# e2e/registry_front.sh asserts what each one stops and what it cannot.
+#
+# #98 called the untested direction "the largest untested assumption in the design".
+# Its issue BODY still shows the old arrow (the re-scope lives in a comment), which is
+# worth knowing before reading it.
+#
+# This rig runs BOTH directions at once, because the in-front claim is only meaningful
+# against the behind-the-registry measurement. "We see 100% of pulls" is not an
+# assertion about our code — it is a DIFFERENCE between two topologies, and a rig that
+# only builds one of them cannot show it.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY VERDACCIO RATHER THAN GitLab CE (which #98 names as primary)
+#
+# GitLab CE gives every ecosystem in one container and is the right substrate for the
+# full matrix later. It is also minutes to boot and hundreds of MB. What this leg needs
+# is one property — a REAL registry that proxies an upstream and CACHES what it fetched
+# — and Verdaccio is that in ~40 MB and two seconds. The topology under test is
+# registry-agnostic by design (D151: "the mechanism is configuration, not code"), so a
+# heavier substrate would slow the rig without changing what it proves.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# THE UPLINK IS A SEPARATE CONTAINER SO IT CAN BE STOPPED
+#
+# Proving a pull was served from the customer registry's OWN cache means proving it did
+# not reach the public registry. Counting requests is one way; cutting the wire is
+# stronger and needs no instrumentation to trust. So neither registry talks to
+# registry.npmjs.org directly — both go through `uplink`, and the driver stops it.
+#
+# VERIFIED BEFORE THIS FILE WAS WRITTEN, not assumed (a rig built on assumed substrate
+# behaviour is the blind-assertion failure this project keeps writing controls against).
+# Probed by hand on 2026-09-02 against verdaccio:6:
+#   - uplink up, GET /left-pad          -> 200
+#   - uplink STOPPED, GET /left-pad     -> 200, 31,157 bytes  (served from its cache)
+#   - uplink STOPPED, GET /lodash       -> 503                (never fetched: no cache)
+# The third line is the one that matters: it proves the cache is real rather than the
+# registry quietly passing through, so "it still worked" is evidence and not luck.
+
+services:
+  # The only route to the public registry. Stopping this container is how the driver
+  # proves a pull was served locally.
+  uplink:
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    volumes:
+      - ./e2e/registryfront/uplink.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # The CUSTOMER's registry, with Yellow Jack IN FRONT of it (D177). Its uplink is the
+  # public registry: we are not in its path at all, which is the point — everything the
+  # client pulls goes through us BEFORE reaching it.
+  custreg-front:
+    image: verdaccio/verdaccio:6@sha256:09b403888c8f73ba9336d7fb3464622f64ea905a64bc46a87c847387c536d4dd
+    volumes:
+      - ./e2e/registryfront/verdaccio-front.yaml:/verdaccio/conf/config.yaml:ro
+    depends_on:
+      - uplink
+    ports:
+      - "4873:4873"
+
+  # The SAME registry wired the OLD way (D151): Yellow Jack is ITS upstream. This is
+  # the control. It exists so the in-front measurement has something to be a difference
+  # from, and so D151's prose claim — "a cache hit never reaches us" — becomes a number.
+  custreg-behind:
+    image: verdaccio/verdaccio:6@sha256:09b403888c8f73ba9336d7fb3464622f64ea905a64bc46a87c847387c536d4dd
+    volumes:
+      - ./e2e/registryfront/verdaccio-behind.yaml:/verdaccio/conf/config.yaml:ro
+    depends_on:
+      - firewall-behind
+    ports:
+      - "4874:4873"
+
+  # Yellow Jack IN FRONT: the client points at us, we point at the customer registry.
+  #
+  # stub scorecard mode, allow-on-unscorable: this leg is about TOPOLOGY, not verdicts.
+  # A scoring failure here would look like a topology failure, and the two must not be
+  # confusable — the other rigs already cover scoring.
+  firewall-front:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "npm"
+      FW_UPSTREAM: "http://custreg-front:4873"
+      FW_SCORECARD_MODE: "stub"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "allow"
+      # The enforcement leg needs one package refused for a reason that needs no
+      # network, so the malware feed is the cleanest lever: it is layer 1, it runs
+      # first, and it cannot be confused with a scoring outcome.
+      FW_MALWARE_LIST: "/feed/registryfront.ndjson"
+      # REVOCATION (leg 9). The operator deny list is the only lever that can change a
+      # verdict WHILE the rig is running, which is what makes revocation measurable at
+      # all: the malware feed above is read once at startup and proves enforcement, not
+      # revocation. Re-read every listReloadTTL (5s, a constant in operatorlist.go).
+      FW_DENY_LIST: "/lists/deny.txt"
+    volumes:
+      - ./e2e/registryfront/feed:/feed:ro
+      # ⚠️ The DIRECTORY is mounted, never the file. The driver rewrites deny.txt, and a
+      # file bind mount pins that file's inode -- a container holding one would go on
+      # reading the old list forever. That failure is silent and platform-masked (Docker
+      # Desktop resolves file mounts by path; Linux does not), which is exactly how it
+      # would survive a laptop run and fail in CI.
+      #
+      # READ-ONLY, and that is not a compromise: the firewall READS an injected list and
+      # never mutates it (D103, and operatorlist.go says so in those words). The edit leg 9
+      # makes comes from the DRIVER, on the host, which a :ro mount does not constrain. The
+      # first version of this file mounted it read-write out of habit and e2e/hardening.sh
+      # refused it -- #22 forbids a writable host bind, and it was right.
+      - ./e2e/registryfront/lists:/lists:ro
+    depends_on:
+      - custreg-front
+    ports:
+      - "8185:8080"
+
+  # Yellow Jack BEHIND: the customer registry points at us as its upstream. Same image,
+  # same settings — only the wiring differs, so any difference the driver measures is
+  # the TOPOLOGY and not a configuration artifact.
+  firewall-behind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "npm"
+      FW_UPSTREAM: "http://uplink:80"
+      FW_SCORECARD_MODE: "stub"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "allow"
+      FW_MALWARE_LIST: "/feed/registryfront.ndjson"
+      # The SAME deny list is wired here, and that is the point of leg 9's control: the
+      # behind-topology firewall is told to refuse the identical package and cannot,
+      # because the customer's registry serves its own cache without ever asking. The
+      # difference the leg measures is the TOPOLOGY, so the configuration must not differ.
+      FW_DENY_LIST: "/lists/deny.txt"
+    volumes:
+      - ./e2e/registryfront/feed:/feed:ro
+      - ./e2e/registryfront/lists:/lists:ro
+    depends_on:
+      - uplink
+    ports:
+      - "8186:8080"
+
+  # ---- OCI, from behind (#108) -------------------------------------------------------
+  #
+  # Everything above is npm. The OCI form of the behind-topology is a registry:2
+  # PULL-THROUGH cache (REGISTRY_PROXY_REMOTEURL) pointed at an OCI-mode firewall, and
+  # registry:2 HEADs a manifest before it GETs it. That HEAD is the request #108 broke:
+  # the relay's truncation guard read a bodyless HEAD as a short transfer and aborted
+  # it, registry:2 turned the aborted response into "not found", `docker pull` failed --
+  # and this rig, having no HEAD in it, went green. This pair is the leg that was
+  # missing.
+  #
+  # No uplink: `uplink` is an nginx HTTP proxy for npm. Docker Hub needs the Bearer
+  # token dance, which the firewall relays to the client and registry:2 performs itself
+  # ("Challenge established with upstream" in its log), so the gate talks to the public
+  # registry directly, exactly as the base compose's firewall-oci does.
+  firewall-oci-behind:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "oci"
+      FW_UPSTREAM: "https://registry-1.docker.io"
+      FW_SCORECARD_MODE: "stub"
+      FW_SCORE_THRESHOLD: "5.0"
+      # FAIL-CLOSED on purpose (#109): leg 9 is only an assertion if an unscorable
+      # lookup would be REFUSED rather than waved through.
+      FW_UNSCORABLE_POLICY: "block"
+    ports:
+      - "8187:8080"
+
+  # The customer's OCI registry, with the gate BEHIND it as its remote.
+  custreg-oci-behind:
+    image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    environment:
+      REGISTRY_PROXY_REMOTEURL: "http://firewall-oci-behind:8080"
+    depends_on:
+      - firewall-oci-behind
+    ports:
+      - "5001:5000"
+
+  # ── Leg 11 (#147): the same OCI pull-through, with ONE tampering hop in the path ────────
+  #
+  #   crane -> custreg-oci-tampered -> tamperfront -> firewall-oci-behind -> Docker Hub
+  #
+  # tamperfront relays everything and inverts the last byte of every blob body, leaving
+  # every header (Docker-Content-Digest included) alone. It shares the gate with the clean
+  # path above on purpose: the ONLY difference between a pull that must succeed and one
+  # that must fail is this hop. A second registry rather than a mode switch on the first,
+  # because registry:2 caches what it pulls -- a blob fetched clean would never be
+  # re-fetched through the hop.
+  tamperfront:
+    build:
+      context: .
+      dockerfile: e2e/tamperfront/Dockerfile
+    environment:
+      TAMPER_UPSTREAM: "http://firewall-oci-behind:8080"
+      TAMPER_MATCH: "/blobs/sha256:"
+    depends_on:
+      - firewall-oci-behind
+    ports:
+      # The rig reads /_tamper here to prove the corruption FIRED. All interfaces, like
+      # every other published port in this file: under dind the rig dials $E2E_HOST.
+      - "8188:8080"
+
+  custreg-oci-tampered:
+    image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    environment:
+      REGISTRY_PROXY_REMOTEURL: "http://tamperfront:8080"
+    depends_on:
+      - tamperfront
+    ports:
+      - "5002:5000"

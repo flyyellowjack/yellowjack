@@ -1,0 +1,22 @@
+# The CUSTOMER's registry, as it would already be configured before Yellow Jack
+# arrives: it proxies the public registry and caches what it fetched.
+#
+# Nothing here is Yellow Jack configuration. That is the point of the topology
+# (D177) — we sit IN FRONT, so the customer's registry keeps its own uplink and
+# needs no change to be gated. Swap this service for a real Nexus, Artifactory,
+# CodeArtifact or GitLab package registry and the rest of the stack is unchanged.
+storage: /verdaccio/storage
+auth:
+  htpasswd:
+    file: /verdaccio/storage/htpasswd
+uplinks:
+  public:
+    url: https://registry.npmjs.org/
+    timeout: 30s
+    cache: true
+packages:
+  '**':
+    access: $all
+    publish: $all
+    proxy: public
+log: { type: stdout, format: pretty, level: warn }

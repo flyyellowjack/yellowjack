@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant Dev as Developer / CI
+    participant FW as Firewall / Proxy
+    participant NPM as npm Registry
+    participant SC as OSS Scorecard
+    participant Repo as Source Repo
+
+    Dev->>FW: npm install request (package@version)
+    FW->>NPM: fetch package metadata
+    NPM-->>FW: metadata (incl. source repo URL)
+    FW->>SC: run scorecard on repo URL
+    SC->>Repo: inspect security practices
+    Repo-->>SC: repo data
+    SC-->>FW: score (0-10)
+
+    alt score >= threshold (ALLOW)
+        FW->>NPM: fetch package tarball
+        NPM-->>FW: tarball
+        FW-->>Dev: return package
+    else score < threshold (BLOCK)
+        FW-->>Dev: error + reason (where protocol allows)
+    end

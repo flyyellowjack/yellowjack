@@ -1,0 +1,24 @@
+# Container images this organisation always serves, without scoring them.
+#
+# Same format and the same 5-second reload as deny.txt beside it. Ships EMPTY on
+# purpose: an allow list is a hole you open deliberately, never one you inherit from an
+# example file. Configured-and-empty is not the same as unset, and the console's policy
+# page shows which of the two you are in.
+#
+# ⚠️ REPOSITORY-WIDE, exactly like the deny list, and here the consequence points the
+# other way: writing "library/alpine:3.20" does not allow one reviewed tag, it allows
+# EVERY tag of library/alpine, including ones published tomorrow. An allow list is the
+# one place that width is worth reading twice.
+#
+# What it is for: your own internal images, and the occasional third-party base image
+# you have already reviewed and do not want re-litigated on every build.
+#
+# WHAT IT DOES NOT DO:
+#
+#   - It does NOT beat the deny list. A name on both is refused, and the gate logs the
+#     override by name rather than leaving the rule name on the 403 as the only clue.
+#   - It does NOT beat a published malware advisory.
+#
+# Add one by writing it on its own line:
+#
+#   your-registry.example.com/platform/base

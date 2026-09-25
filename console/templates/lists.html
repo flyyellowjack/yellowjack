@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Operator lists</title>
+  {{ template "head" }}
+  <style>
+    .banner > strong:first-child { display: block; margin-bottom: 2px; }
+    .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(29rem, 1fr));
+              gap: 1.25rem; align-items: start; }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); padding: .9rem 1.1rem; }
+    .panel > h2 { font-size: 1rem; margin: 0 0 .15rem; display: flex;
+                  align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+    .panel .src { font-size: .8rem; opacity: .7; margin: 0 0 .8rem; word-break: break-all; }
+    .panel h3 { font-size: .78rem; margin: 1rem 0 .35rem; text-transform: uppercase;
+                letter-spacing: .05em; opacity: .75; }
+    .panel h3:first-of-type { margin-top: .4rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+    .chip { display: inline-flex; align-items: center; gap: .3rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem;
+            border: 1px solid var(--line-strong); border-radius: 3px; padding: .05rem .15rem .05rem .4rem; }
+    .chip form { display: inline; margin: 0; }
+    .chip button { appearance: none; border: 0; background: transparent; cursor: pointer;
+                   font-size: .95rem; line-height: 1; padding: .05rem .25rem; color: inherit;
+                   opacity: .55; }
+    .chip button:hover { opacity: 1; color: var(--danger); }
+    .chip.ro { opacity: .85; }
+    .addrow { display: flex; gap: .35rem; margin-top: .6rem; }
+    .addrow input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    font-size: .85rem; padding: .3rem .45rem; border: 1px solid var(--line-strong);
+                    border-radius: 3px; background: transparent; color: inherit; }
+    .addrow button { font: inherit; font-size: .85rem; padding: .3rem .7rem; cursor: pointer;
+                     border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface-2); color: inherit; }
+    .addrow button:hover { border-color: var(--accent); }
+    .diffline { font-size: .84rem; margin: .35rem 0 0; }
+    .diffline .k { font-weight: 600; }
+    table.hist { border-collapse: collapse; width: 100%; font-size: .82rem; margin-top: .3rem; }
+    table.hist td { padding: .2rem .5rem .2rem 0; border-bottom: 1px solid var(--line-soft);
+                    vertical-align: top; }
+    table.hist td.sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: .7; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Allow &amp; block lists</h1>
+      <p class="sub">Your organisation&rsquo;s own decisions about packages, authored here and enforced by every gate.</p>
+    </div>
+  </header>
+
+  {{ if .Notice }}
+    <div class="banner {{ if eq .NoticeLevel "err" }}bad{{ else if eq .NoticeLevel "warn" }}warn{{ else }}ok{{ end }}">
+      {{ .Notice }}
+    </div>
+  {{ end }}
+
+  <p class="note">
+    Your organisation&rsquo;s own allow and deny lists &mdash; the decisions you have made
+    about packages, as opposed to what a scanner or a published advisory says about them.
+    <strong>Authored</strong> is what is written and committed here.
+    <strong>Enforced</strong> is what firewall replicas report they have loaded. They move on
+    different clocks (a replica re-reads its file every few seconds; this page shows the last
+    heartbeat, up to {{ .StaleAfter }} old), so a change you just made can be authored but not
+    yet enforced. That is expected, and it is the point of showing both.
+  </p>
+
+  <div class="banner">
+    <strong>The published-malware feed is separate, and it wins.</strong>
+    <code>FW_MALWARE_LIST</code> is consulted <em>before</em> these lists, so allow-listing a
+    package that a published advisory names does <em>not</em> serve it. That ordering is
+    deliberate: the alternative is an allow list that can serve known malware. The feed is not
+    editable here &mdash; it is machine-generated from OSV, and &ldquo;publicly reported as
+    malicious&rdquo; and &ldquo;our organisation blocked this&rdquo; are different facts that a
+    developer needs to be able to tell apart.
+  </div>
+
+  {{ if .Disabled }}
+    <div class="banner warn"><strong>Editing is off</strong>{{ .Disabled }}</div>
+  {{ end }}
+  {{ if .Err }}
+    <div class="banner bad"><strong>Fleet state unknown</strong>{{ .Err }}</div>
+  {{ end }}
+
+  <div class="panels">
+    {{ range .Panels }}
+      <section class="panel">
+        <h2>{{ .Title }} <span class="mono muted" style="font-size:.8rem;">{{ .Var }}</span></h2>
+        <p class="src">
+          {{ if .Path }}<span class="mono">{{ .Path }}</span>{{ else }}<span class="muted">no file yet</span>{{ end }}
+          {{ if .Rev }} &middot; <span class="mono muted">{{ .Rev }}</span>{{ end }}
+        </p>
+
+        {{ if .AuthoredErr }}
+          <div class="banner bad">
+            <strong>This list could not be read</strong>
+            {{ .AuthoredErr }}
+          </div>
+        {{ end }}
+
+        <h3>Authored</h3>
+        {{ if .Authored }}
+          <div class="chips">
+            {{ $kind := .Kind }}
+            {{ $editable := $.Editable }}
+            {{ range .Authored }}
+              <span class="chip{{ if not $editable }} ro{{ end }}">{{ . }}
+                {{ if $editable }}
+                  <form method="post" action="/lists">
+                    <input type="hidden" name="kind" value="{{ $kind }}">
+                    <input type="hidden" name="entry" value="{{ . }}">
+                    <input type="hidden" name="action" value="remove">
+                    <button type="submit" title="Remove {{ . }} from the {{ $kind }} list"
+                            aria-label="Remove {{ . }}">&times;</button>
+                  </form>
+                {{ end }}
+              </span>
+            {{ end }}
+          </div>
+        {{ else if not .AuthoredErr }}
+          <p class="empty">Nothing authored. An empty list is not the same as no list &mdash; nothing here is allowed or denied by name.</p>
+        {{ end }}
+
+        {{ if $.Editable }}
+          <form class="addrow" method="post" action="/lists">
+            <input type="hidden" name="kind" value="{{ .Kind }}">
+            <input type="hidden" name="action" value="add">
+            <input name="entry" placeholder="package name" spellcheck="false" autocomplete="off"
+                   aria-label="Add a package to the {{ .Kind }} list">
+            <button type="submit">{{ if eq .Kind "allow" }}Allow{{ else }}Deny{{ end }}</button>
+          </form>
+        {{ end }}
+
+        <h3>Enforced by the fleet</h3>
+        {{ if .Reported }}
+          {{ if .Diverged }}
+            <div class="banner bad">
+              <strong>Replicas disagree</strong>
+              {{ .Replicas }} replicas report this list and they do not all report the same
+              contents. One of them is running an older copy of the file &mdash; check that the
+              change has reached every host.
+            </div>
+          {{ end }}
+          {{ if .Enforced }}
+            <div class="chips">
+              {{ range .Enforced }}<span class="chip ro">{{ . }}</span>{{ end }}
+            </div>
+            {{ if .Omitted }}
+              <p class="diffline muted">&hellip; and {{ .Omitted }} more not shown by the replica.</p>
+            {{ end }}
+          {{ else }}
+            <p class="empty">Configured, but the replica loaded <strong>zero</strong> entries.</p>
+          {{ end }}
+          <p class="diffline muted">
+            reported by {{ .Replicas }} replica{{ if ne .Replicas 1 }}s{{ end }}
+            {{ if .EnfDigest }}&middot; <span class="mono">sha256:{{ .EnfDigest }}</span>{{ end }}
+          </p>
+
+          {{ if .Pending }}
+            <p class="diffline"><span class="k">Not yet enforced:</span>
+              {{ range .Pending }}<span class="mono">{{ . }}</span> {{ end }}
+              <span class="muted">&mdash; authored here but not in what the fleet last reported. Usually just the heartbeat lag; if it persists, the replicas are not reading this file.</span>
+            </p>
+          {{ end }}
+          {{ if .Extra }}
+            <p class="diffline"><span class="k">Enforced but not authored here:</span>
+              {{ range .Extra }}<span class="mono">{{ . }}</span> {{ end }}
+              <span class="muted">&mdash; a replica is enforcing something this file does not contain. It is reading a different file, or one that has not been updated from here.</span>
+            </p>
+          {{ end }}
+        {{ else }}
+          <p class="empty">No replica has reported this list. Either none is configured with it, or none has sent a heartbeat recently.</p>
+        {{ end }}
+
+        {{ if .History }}
+          <h3>Recent changes</h3>
+          <table class="hist">
+            {{ range .History }}
+              <tr>
+                <td class="sha">{{ .Short }}</td>
+                <td>{{ .Subject }}</td>
+                <td class="muted">{{ .Author }}</td>
+                <td class="muted">{{ .When }}</td>
+              </tr>
+            {{ end }}
+          </table>
+        {{ end }}
+      </section>
+    {{ end }}
+  </div>
+
+  {{ if .StoreDesc }}
+    <p class="note" style="margin-top:1.5rem;">
+      Changes are committed to {{ .StoreDesc }}. The history above is that git history &mdash;
+      who changed what, and when &mdash; and it can be read with <code>git log -p</code> on the
+      list file without going through this console.
+    </p>
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

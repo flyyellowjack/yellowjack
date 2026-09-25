@@ -1,0 +1,71 @@
+# Shared corpus: what counts as a well-formed line in an operator allow/deny list.
+#
+# WHY THIS FILE EXISTS, and why it is not a Go table.
+#
+# Two pieces of code decide whether an entry is well-formed, and they live in
+# packages that cannot import each other (every service here is its own `package
+# main`, which is the microservice seam CLAUDE.md asks for):
+#
+#   * the GATE      -- parseOperatorList/rejectVersionPin in operatorlist.go, which
+#                      refuses to START on a malformed line, and
+#   * the CONSOLE   -- validateEntry in console/liststore.go, which refuses to WRITE
+#                      one.
+#
+# If those two drift apart the failure is not cosmetic and it is not loud: the
+# console happily authors a line, commits it, and the next replica to RESTART
+# refuses to boot on a policy file the operator was told was fine. The console
+# would have bricked the gate through the gate's own safety check.
+#
+# So both read this file, and a third assertion checks the one-way property that
+# makes the pair safe: CONSOLE ACCEPTS => GATE ACCEPTS. The console is allowed to be
+# stricter (it does, for '#'), never looser.
+#
+# FORMAT: gate <TAB> console <TAB> ecosystem <TAB> line <TAB> note
+#   gate/console: "ok" or "bad"
+#   line:         the literal text, except that a literal tab is written \t
+#                 (a tab cannot be carried by a tab-separated file)
+#
+# Adding a case here is the cheap way to pin a rule in both services at once.
+
+# --- plain names, accepted everywhere ------------------------------------------
+ok	ok	npm	lodash	the ordinary case
+ok	ok	npm	left-pad	hyphens are ordinary
+ok	ok	npm	@acme/internal-cli	an npm SCOPE is not a version pin -- the leading @ is part of the name
+ok	ok	pypi	requests	pypi plain name
+ok	ok	pypi	python-dateutil	pypi hyphenated
+ok	ok	go	github.com/pkg/errors	a Go module path is a name, and its dots and slashes are not separators
+ok	ok	npm	UPPERCASE	case is normalised by malwareKey, not rejected here
+
+# --- versions: a DENY entry may name one release (#155); a name that is not a name is refused
+ok	ok	npm	lodash@4.17.20	a version-scoped DENY entry (#155): the hijack case, refusing one release and leaving its siblings installable
+ok	ok	npm	@acme/cli@1.2.3	the same on a SCOPED name: the second @ is the version, the first is the scope
+ok	ok	pypi	requests==2.31.0	pip's own exact-pin spelling, which is what an operator will copy from a requirements file
+bad	bad	pypi	requests:2.31.0	a colon is not part of a PyPI name and is not its pin spelling, so this would load and match NOTHING
+bad	bad	npm	lodash:latest	same on npm: a colon is in no npm name, and the pin spelling is "name@version"
+
+# --- maven: the identity itself carries a colon (#161) -----------------------------
+ok	ok	maven	org.apache.commons:commons-lang3	a Maven IDENTITY is group:artifact; the old guard refused every one of these, so a Maven gate could not use these lists at all
+ok	ok	maven	org.apache.commons:commons-lang3:3.14.0	two colons name a release: a version-scoped deny
+bad	bad	maven	commons-lang3	a Maven coordinate without its group names nothing we can match
+bad	bad	maven	org.apache:commons:lang3:3.14.0	three colons name nothing in this grammar
+
+# --- a separator with nothing after it ---------------------------------------------
+bad	bad	npm	lodash@	an empty version is a typo, not "every version" -- the bare name is how that is written
+bad	bad	pypi	requests==	the same on PyPI
+
+# --- oci is the documented exception: the reference IS the identity (D164) ------
+ok	ok	oci	library/nginx	a bare repository
+ok	ok	oci	library/nginx:1.25	a TAG is well-formed for oci and reduces to the repository -- surprising, so it is pinned
+ok	ok	oci	registry.example.com/team/app:sha-abc	registry-qualified with a tag
+
+# --- whitespace: one name per line, and the gate says so --------------------
+bad	bad	npm	lodash 4.17.20	a space is how "name version" gets typed by mistake
+bad	bad	npm	lodash\t4.17.20	a literal tab, same mistake with a different key
+ok	bad	npm	 	a line of only whitespace is TRIMMED to empty and skipped by the file parser, so the gate accepts it -- but it is not an entry anyone can add
+
+# --- empty: skipped by the gate's file parser, refused by the console's box ----
+ok	bad	npm		an empty LINE is legal in a file (skipped); an empty ENTRY is not a thing to add
+
+# --- comments: legal in a file, never inside an entry the console writes -------
+ok	bad	npm	# a comment	a whole-line comment is legal in the file, but is not an entry
+ok	bad	npm	lodash # pinned after the 2026-08 incident	the gate strips the comment and keeps "lodash"; the console must not accept a name with one glued on, because what it would store is not what was typed

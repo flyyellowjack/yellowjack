@@ -1,0 +1,36 @@
+# Container images this organisation refuses, whatever anyone else says about them.
+#
+# Same format and the same 5-second reload as the npm lists next door: one name per
+# line, blank lines and #-comments ignored, a failed read keeps the last good list
+# rather than failing open. This list BEATS the allow list beside it.
+#
+# ⚠️ AN ENTRY HERE COVERS THE WHOLE REPOSITORY — EVERY TAG OF IT.
+#
+# This is the one rule that surprises people, so it is stated before the example. An
+# image's identity includes its tag, but an operator-list entry is matched on the
+# REPOSITORY alone, so:
+#
+#   library/busybox          blocks library/busybox:latest, :1.36, every tag
+#   library/busybox:1.36     ALSO blocks every tag — NOT just 1.36
+#
+# The second line is enforced exactly like the first. That is deliberate (an advisory
+# condemns a repository, not whichever tag you happened to ask for), but it is not what
+# the line looks like it says, so the gate logs a warning naming the entry and the
+# repository actually in force. Per-tag entries are not supported; if you need one, say
+# so on the issue tracker rather than writing a tag here and assuming.
+#
+# WHY YOU WOULD PUT A NAME HERE
+#
+#   1. A base image you have decided against — licence, provenance, a maintainer you
+#      do not want in your build.
+#
+#   2. NAMESPACE CONFUSION. If you push internal images, put those repository names
+#      here so a PUBLIC image claiming one of them is refused. No public data can
+#      detect that for you: a private name is absent from every public index.
+#
+# Write the name as the registry sees it. Docker Hub official images live under
+# "library/", so busybox is "library/busybox" — the name your client sends, which is
+# also the name the refusal will quote back at you.
+#
+# The example below is here so the walkthrough has something to refuse. Delete it.
+library/busybox

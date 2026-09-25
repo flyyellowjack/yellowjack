@@ -1,0 +1,95 @@
+# ─── Secrets & local configuration ──────────────────────────────────────────
+# Never commit credentials. Yellow Jack takes ALL config from environment
+# variables at runtime, so nothing sensitive belongs in the repo. These patterns
+# are defense-in-depth: if someone ever drops a secret file here, git ignores it.
+.env
+.env.*
+*.env
+secrets.*
+credentials
+credentials.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+id_rsa
+id_rsa.*
+*.token
+*_token
+*.secret
+
+# ─── Build artifacts ─────────────────────────────────────────────────────────
+# Compiled binaries are rebuilt from source (and inside Docker); never tracked.
+#
+# ROOT-ANCHORED (leading slash), and that is load-bearing. `go build .` drops the
+# binary at the repo root and nowhere else, but an unanchored `yellowjack` ignores
+# ANY path with that name -- which silently swallowed the whole Helm chart at
+# deploy/helm/yellowjack/ (#83): `git add` did nothing, `git ls-files` saw nothing,
+# and the pinned-images guard, which walks tracked files, checked nothing there
+# while reporting every image pinned.
+/yellowjack
+/yellowjack-*
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.log
+/dist/
+/build/
+
+# ─── Go tooling ──────────────────────────────────────────────────────────────
+# go.work / go.work.sum are local workspace files, not project config.
+go.work
+go.work.sum
+# Vendor directory (we don't vendor today; ignore if it ever appears locally).
+/vendor/
+
+# ─── Editor / IDE / agent configs ────────────────────────────────────────────
+# Kept out of the repo deliberately: the supply-chain attacks we defend against
+# drop poisoned configs into these directories.
+.vscode/
+.idea/
+.claude/
+*.code-workspace
+
+# ─── OS cruft ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python bytecode. Deliberately OUTSIDE the local-only block below: it is cruft, not
+# content, and everything inside that block is treated as never-publishable.
+__pycache__/
+*.pyc
+
+
+# Scratch files used to compose commit messages and MR descriptions.
+#
+# COMMITMSG.tmp reached main on 2026-08-31 and had to be removed: the pattern
+# `git add -A && git commit -F COMMITMSG.tmp` stages the message file along with the
+# work, so the file lands in the very commit it describes. It carried no secret, but a
+# repo that goes public should not ship an author's scratch buffer. Ignored rather than
+# only remembered -- the mistake is invisible at the moment it happens, because the
+# commit succeeds and the file is deleted right afterwards.
+*.tmp
+
+# Run-scoped operator-list git working tree + bare remote, created and removed by
+# e2e/async_local.sh (leg 23). Never committed: it is a fixture COPY that the rig
+# commits into, and a nested repo in the source tree would confuse every git tool.
+.e2e-lists/
+.e2e-lists-remote/
+.e2e-lists-gitconfig
+
+# The registry-front rig's operator deny list (leg 9, revocation). The driver creates it
+# empty before the stack starts and truncates it on exit, so it is a RUN ARTIFACT, not a
+# fixture: committing it would make leg 9's "before" state depend on whatever the last
+# run left behind. The directory is mounted (never the file) so the container sees the
+# rewrite, which is why only the file is ignored and the directory is kept by .gitkeep.
+e2e/registryfront/lists/deny.txt
+
+# The console demo (scripts/demo.sh): generated credentials, lists and feed.
+/.demo/

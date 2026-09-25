@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  BORROW-A-SCORE FIXTURE: this POM's <scm> claims junit-team/junit5, a repo Guava
+  does not own. deps.dev records github.com/google/guava for com.google.guava:guava,
+  so the D33/D39 cross-check must refuse to score the claimed repo.
+
+  Note there is deliberately NO <parent>, so LookupRepo takes the artifact's own
+  <scm> and never walks the parent chain — keeping this leg about verification.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.google.guava</groupId>
+  <artifactId>guava</artifactId>
+  <version>33.6.0-jre</version>
+  <packaging>jar</packaging>
+  <name>Guava</name>
+  <scm>
+    <url>https://github.com/junit-team/junit5</url>
+    <connection>scm:git:https://github.com/junit-team/junit5.git</connection>
+  </scm>
+</project>

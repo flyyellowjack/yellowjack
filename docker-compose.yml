@@ -1,0 +1,190 @@
+# Runs the full Yellow Jack stack locally: Postgres + approval + firewall(s) +
+# cache + scheduler (on-demand scanning).
+# The inter-service URLs are injected as config (env vars), pointing at Docker's
+# internal DNS names (the service keys below) — the same "configurable endpoints
+# over HTTP/REST" model that lets these run as separate services anywhere.
+#
+#   docker compose up --build        # build images and start the stack
+#   curl http://localhost:8080/healthz
+#   docker compose down              # stop (add -v to also wipe the DB volume)
+
+services:
+  postgres:
+    # PINNED BY DIGEST (#22), and this is the one that matters most: a self-hoster
+    # runs this file unmodified. Nexus bug #544 is a newer `:latest` triggering an
+    # unintended DATABASE MIGRATION on someone who changed nothing — the same shape
+    # of failure a moving `postgres:17` could hand our own users.
+    #
+    # The tag stays beside the digest so a reviewer can see which version moved.
+    # To move it:  sh scripts/dev.sh resolve postgres:18
+    image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+    environment:
+      # NO CREDENTIAL IN THE SHIPPED FILE (#22). Generated per machine into a
+      # git-ignored .env by scripts/gen-env.sh, which compose loads automatically.
+      # Required rather than defaulted: a default here is one identical password on
+      # every installation, which is the finding. `sh scripts/dev.sh up` generates it
+      # for you, so "runs with nothing set" still holds for a developer.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?not set - run `sh scripts/dev.sh env` to generate .env (or export it; e2e rigs do)}
+      POSTGRES_DB: yellowjack
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The approval service waits for this before starting, so it never races
+      # the database during boot.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d yellowjack"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  approval:
+    build:
+      context: .
+      dockerfile: approval/Dockerfile
+    environment:
+      APPROVAL_LISTEN_ADDR: ":8090"
+      # Same secret as the postgres service above, interpolated rather than repeated:
+      # two literals that must match is a rotation bug waiting to happen.
+      APPROVAL_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/yellowjack?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${YJ_CONTROL_PLANE_BIND:-127.0.0.1}:8090:8090"
+
+  # The product admin/review GUI (D10 priority #3). A separate, stateless service
+  # that is purely an HTTP CLIENT of the approval service — it owns no state and
+  # never touches Postgres. It lists the approval queue AND (with a credential set)
+  # lets a human approve/deny + correct a package's repo association.
+  #
+  # SECURITY (D19): the override (write) path ships behind BASIC GATEWAY AUTH — set
+  # CONSOLE_AUTH_USER + CONSOLE_AUTH_PASS to enable it. Left empty below, the console
+  # runs READ-ONLY (override endpoint disabled). Either way the host port is
+  # published on LOOPBACK ONLY (127.0.0.1) — reachable from the developer's browser,
+  # not the LAN. Inside the compose network it binds :8085 so the loopback mapping
+  # works. (Per-user SSO is the eventual target but de-prioritized — D19.)
+  console:
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+    environment:
+      CONSOLE_LISTEN_ADDR: ":8085"
+      CONSOLE_APPROVAL_URL: "http://approval:8090"
+      # Set BOTH to enable manual overrides (shared credential, basic auth). Empty =
+      # read-only. Provide via the environment, e.g. CONSOLE_AUTH_USER=admin
+      # CONSOLE_AUTH_PASS=... docker compose up — do not hardcode a secret here.
+      CONSOLE_AUTH_USER: "${CONSOLE_AUTH_USER:-}"
+      CONSOLE_AUTH_PASS: "${CONSOLE_AUTH_PASS:-}"
+    depends_on:
+      - approval
+    ports:
+      - "127.0.0.1:8085:8085"
+
+  # npm firewall. The same image runs as a per-ecosystem firewall; only the
+  # injected FW_ECOSYSTEM + FW_UPSTREAM differ (see firewall-oci below).
+  firewall:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "npm"
+      FW_UPSTREAM: "https://registry.npmjs.org"
+      FW_SCORECARD_MODE: "api"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "block"
+      FW_APPROVAL_URL: "http://approval:8090"
+      # For FW_SCORECARD_MODE=local (on-demand scanning), the firewall POSTs to the
+      # SCHEDULER, which launches a run-once scanner container per scan (D16). Mode
+      # above is "api" by default, so this is wired-but-unused until you flip it.
+      FW_SCANNER_URL: "http://scheduler:8096"
+    depends_on:
+      - approval
+      - scheduler
+    ports:
+      - "8080:8080"
+
+  # Docker/OCI firewall — same image, FW_ECOSYSTEM=oci. Gates image manifests;
+  # quarantines images whose source repo can't be resolved/scored, with manual
+  # association via the same approval service.
+  firewall-oci:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "oci"
+      FW_UPSTREAM: "https://registry-1.docker.io"
+      FW_SCORECARD_MODE: "api"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "block"
+      FW_APPROVAL_URL: "http://approval:8090"
+    depends_on:
+      - approval
+    ports:
+      - "8081:8080"
+
+  # The OPTIONAL front door. Clients that want caching point at :8071; the cache
+  # forwards to the firewall (so the firewall still decides), then stores allowed
+  # responses. Clients that want firewalling only can skip this and use :8080.
+  cache:
+    build:
+      context: .
+      dockerfile: cache/Dockerfile
+    environment:
+      CACHE_LISTEN_ADDR: ":8070"
+      CACHE_UPSTREAM: "http://firewall:8080"
+    depends_on:
+      - firewall
+    ports:
+      - "8071:8070"
+
+  # The scheduler: the firewall's target for on-demand ("local") scoring. It
+  # launches ONE run-once scanner container per scan (D16), so it needs the docker
+  # CLI (baked into its image) AND the daemon socket (mounted below). Launched
+  # containers join the `yellowjack` network so they can POST results back to
+  # `scheduler:8096` (SCHEDULER_SELF_URL). Set FW_SCORECARD_MODE=local on a firewall
+  # to route scoring here.
+  #
+  # PREREQUISITE: the run-once scanner image must exist on the daemon, because the
+  # scheduler instantiates it by tag (as it will pull a published image later):
+  #   docker build -f scanner/Dockerfile -t yellowjack-scanner:dev .
+  # Provide a GitHub token via the GITHUB_TOKEN env var before `up` for real scans.
+  scheduler:
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    environment:
+      SCHEDULER_LISTEN_ADDR: ":8096"
+      SCHEDULER_SELF_URL: "http://scheduler:8096"
+      # How each run-once container is launched (D16). "docker-run" shells out to the
+      # docker CLI (baked into this image); "docker-api" talks to the daemon's HTTP
+      # API over the mounted socket directly (no CLI needed, no Docker SDK dep). Both
+      # use the socket mounted below. Default is docker-run.
+      SCHEDULER_LAUNCHER: "docker-run"
+      SCHEDULER_SCANNER_IMAGE: "yellowjack-scanner:dev"
+      SCHEDULER_DOCKER_NETWORK: "yellowjack"
+      SCHEDULER_SCAN_TIMEOUT_SECS: "240"
+      # How many scans may run at once — one whole scorecard container each, so this
+      # is what stops a burst (a big cold dependency tree, or a hostile caller) from
+      # exhausting the host. Callers over the cap QUEUE inside the timeout above and
+      # only get a retryable 503 if no slot frees up. 0 disables the cap.
+      SCHEDULER_MAX_CONCURRENT_SCANS: "8"
+      # Forwarded into each launched scanner container. Keep the container's own cap
+      # BELOW the scheduler's, or the scheduler gives up before a slow scan reports.
+      SCANNER_SCAN_TIMEOUT_SECS: "180"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+    volumes:
+      # Docker-out-of-docker: the scheduler drives the host daemon to run siblings.
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${YJ_CONTROL_PLANE_BIND:-127.0.0.1}:8096:8096"
+
+volumes:
+  pgdata:
+
+# Name the default network explicitly so the scheduler can attach the run-once
+# containers it launches (`docker run --network yellowjack`) to the SAME network
+# these services are on — otherwise the containers couldn't resolve `scheduler`.
+networks:
+  default:
+    name: yellowjack

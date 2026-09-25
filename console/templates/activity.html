@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Yellow Jack — Package activity</title>
+  {{ template "head" }}
+  <style>
+    .stale td { background: var(--accent-soft); }
+    .stale .days { font-weight: 600; }
+    form.filters input.days { width: 5.5rem; }
+    .scopenote { font-size: .78rem; margin: -.5rem 0 1rem; }
+  
+  </style>
+</head>
+<body>
+<div class="app">
+{{ template "sidebar" .Nav }}
+<main class="main">
+  <header class="page-head">
+    <div>
+      <h1>Package activity</h1>
+      <p class="sub">What the gates have seen, and what has gone quiet.</p>
+    </div>
+    <div class="aside">{{ .Packages }} package(s){{ if .AuthUser }} · {{ .AuthUser }}{{ end }}</div>
+  </header>
+  {{ template "audittabs" "activity" }}
+
+  <form class="filters" method="get" action="/activity">
+    <input type="text" name="package" placeholder="package…" value="{{ .Filter.Package }}">
+    <input type="text" name="ecosystem" placeholder="ecosystem (npm/pypi/oci)…" value="{{ .Filter.Ecosystem }}">
+    <select name="action">
+      <option value="allow" {{ if eq .Filter.Action "allow" }}selected{{ end }}>pulls (allow)</option>
+      <option value="block" {{ if eq .Filter.Action "block" }}selected{{ end }}>blocks</option>
+      <option value="" {{ if eq .Filter.Action "" }}selected{{ end }}>any verdict</option>
+    </select>
+    <label for="quiet_days">quiet after</label>
+    <input class="days" type="number" min="0" id="quiet_days" name="quiet_days" value="{{ .QuietDays }}">
+    <label>days</label>
+    <button type="submit">Search</button>
+    {{ if .Filter.Active }}<a class="clear" href="/activity">clear</a>{{ end }}
+  </form>
+
+  {{ if .Rows }}
+  <p class="summary"><strong>{{ .StaleCount }}</strong> of <strong>{{ .Packages }}</strong> package(s) not seen in {{ .QuietDays }}+ days.</p>
+  <p class="scopenote muted">
+    This is <em>observed flow</em>: packages this firewall has actually seen requested, and when each was last seen.
+    It is <strong>not</strong> an inventory of your repository — a package that exists upstream but was never pulled
+    through here cannot appear, so this answers &ldquo;what has gone quiet&rdquo;, not &ldquo;what is published and unused&rdquo;.
+    {{ if eq .Filter.Action "allow" }}Counting successful pulls only, so a package that is blocked repeatedly does not look freshly used.{{ end }}
+  </p>
+  <table>
+    <thead>
+      <tr><th>Package</th><th>Ecosystem</th><th>Events</th><th>Last seen</th><th>Days quiet</th></tr>
+    </thead>
+    <tbody>
+      {{ range .Rows }}
+      <tr {{ if .Stale }}class="stale"{{ end }}>
+        <td><span class="pkg">{{ .Package }}</span></td>
+        <td class="muted">{{ if .Ecosystem }}{{ .Ecosystem }}{{ else }}—{{ end }}</td>
+        <td class="num">{{ .Events }}</td>
+        <td class="muted num">{{ .LastAt.UTC.Format "2006-01-02 15:04:05 UTC" }}</td>
+        <td class="num days">{{ .DaysQuiet }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else if .Filter.Active }}
+  <p class="empty">No packages match this filter. <a href="/activity">Clear it</a> to see everything the firewall has seen.</p>
+  {{ else }}
+  <p class="empty">Nothing seen yet. Packages appear here as the firewall allows or blocks them.</p>
+  {{ end }}
+</main>
+</div>
+</body>
+</html>

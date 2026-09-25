@@ -1,0 +1,12 @@
+{
+  "name": "left-pad",
+  "version": "1.3.0",
+  "description": "HONEST FIXTURE: claims the same repo deps.dev records, so verification passes and the background scan must be launched against it.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevemao/left-pad.git"
+  },
+  "dist": {
+    "tarball": "http://fakeupstream:8000/left-pad/-/left-pad-1.3.0.tgz"
+  }
+}
