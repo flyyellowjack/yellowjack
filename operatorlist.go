@@ -165,6 +165,22 @@ func (l *operatorList) hasVersion(ecosystem, name, version string) bool {
 	return false
 }
 
+// covers reports whether an ALLOW entry reaches this release of the package, for the
+// question "does the administrator's allow outrank a known-malware advisory here?".
+//
+// A bare name covers EVERY version: future ones, and one we could not identify (version
+// ""). D367: "if the admin whitelists all future versions of a package, that's
+// dumb, but they did it, their problem, not ours" -- the product does not narrow an
+// explicit instruction. A version-scoped entry covers exactly the release it names.
+//
+// One predicate for every place an advisory meets the allow list (Evaluate, the npm
+// packument filter, the PyPI index filter), so the three cannot disagree about what an
+// entry means. It does not consult the deny list; callers do, because the deny list
+// outranks the allow list everywhere and each caller already asks it.
+func (l *operatorList) covers(ecosystem, name, version string) bool {
+	return l.has(ecosystem, name) || l.hasVersion(ecosystem, name, version)
+}
+
 // anyVersionScoped reports whether this list carries version-scoped entries AT ALL.
 //
 // It exists for one reason, and it is the #103 lesson arriving a second time: the npm
@@ -255,7 +271,7 @@ func loadOperatorList(kind, ecosystem, path string) (*operatorList, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("operator %s-list %q must be an absolute path: a relative path "+
 			"resolves against the working directory, so it is chosen by wherever the process "+
-			"was launched rather than by the operator (issue #38 / CVE-2025-64726)", kind, path)
+			"was launched rather than by the operator (CVE-2025-64726)", kind, path)
 	}
 	f, err := os.Open(path)
 	if err != nil {

@@ -67,6 +67,14 @@ func fileCredential(path string, logf func(string, ...any)) credentialSource {
 // fileCredentialEvery is fileCredential with the re-read interval exposed, so tests
 // can exercise rotation without sleeping a real second per assertion.
 func fileCredentialEvery(path string, logf func(string, ...any), ttl time.Duration) credentialSource {
+	return fileCredentialFor("upstream-auth", "upstream requests", path, logf, ttl)
+}
+
+// fileCredentialFor is the same reader with the log lines naming WHICH credential and WHAT
+// it authenticates. A second credential file exists since D366 (the known-malware feed's
+// access key), and an operator reading "upstream requests are going out unauthenticated"
+// about a FEED key would go and debug the registry.
+func fileCredentialFor(label, what, path string, logf func(string, ...any), ttl time.Duration) credentialSource {
 	var (
 		mu       sync.Mutex
 		last     string    // last value successfully read; "" until the first good read
@@ -88,9 +96,9 @@ func fileCredentialEvery(path string, logf func(string, ...any), ttl time.Durati
 				// Name whether a credential is still being served, because the two
 				// cases need different urgency from whoever reads this line.
 				if last != "" {
-					logf("upstream-auth: cannot read %s (%v) — still sending the last credential read successfully", path, err)
+					logf("%s: cannot read %s (%v) — still sending the last credential read successfully", label, path, err)
 				} else {
-					logf("upstream-auth: cannot read %s (%v) — NO credential has ever been read; upstream requests are going out unauthenticated", path, err)
+					logf("%s: cannot read %s (%v) — NO credential has ever been read; %s are going out unauthenticated", label, path, err, what)
 				}
 			}
 			return last
@@ -102,13 +110,13 @@ func fileCredentialEvery(path string, logf func(string, ...any), ttl time.Durati
 		if v == "" {
 			if !degraded {
 				degraded = true
-				logf("upstream-auth: %s is empty — keeping the previous credential (a refresher may be mid-write)", path)
+				logf("%s: %s is empty — keeping the previous credential (a refresher may be mid-write)", label, path)
 			}
 			return last
 		}
 		if degraded {
 			degraded = false
-			logf("upstream-auth: %s is readable again", path)
+			logf("%s: %s is readable again", label, path)
 		}
 		last = v
 		return last

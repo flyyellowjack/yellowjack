@@ -40,6 +40,9 @@ func overruleVerdict(r *http.Request, d Decision) bool {
 	if h == nil || !h.armed {
 		return false
 	}
+	if d.Version == "" {
+		d.Version = h.d.Version // the overruling verdict concerns the same request (D363)
+	}
 	h.d = d
 	return true
 }

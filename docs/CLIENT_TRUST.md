@@ -9,18 +9,23 @@ If your certificate chains to a CA your machines already trust, you need none of
 
 The natural way to organise this page is one row per ecosystem — "Python", "Java", "Node".
 **That page would be wrong for some installs of every ecosystem it covered.** Measured on
-one Ubuntu 24.04 machine, same Python version, same moment:
+one Ubuntu 24.04 machine, same Java version, same moment:
 
 ```
-apt  python3-certifi   certifi.where() = /etc/ssl/certs/ca-certificates.crt      system store: trusted
-venv pip certifi       certifi.where() = .../site-packages/certifi/cacert.pem    system store: NOT trusted
+JDK from apt (openjdk 21)     our CA inside the JVM's own cacerts: yes    system store: trusted
+Temurin 21 tarball            our CA inside the JVM's own cacerts: no     system store: NOT trusted
 ```
 
-Both are "Python". One follows the operating system's trust store and one carries its own
-copy that the operating system never touches. The same split was measured for the JVM and
-for Node. So the
-tables below are indexed by **how the tool got onto the machine**, and a developer can add
-a new row at any time — `python3 -m venv` creates one — without anything being told.
+Both are "Java 21". One is kept in step with the operating system's trust store and one
+carries its own copy that the operating system never touches. The same split was measured
+for Node (apt vs the nodejs.org tarball). So the tables below are indexed by **how the tool
+got onto the machine**, and a developer can add a new row at any time — unpacking a JDK or
+Node tarball, or installing `uv`, creates one — without anything being told.
+
+Python shows the same trap in a subtler form, **inside one venv**: `pip` there trusts the
+operating system store, because it reads it directly; a program in that same venv that calls
+`requests` does not, because the `certifi` package it uses ships its own bundle. Package
+installs go through pip, so they are covered; your application's own HTTPS calls are not.
 
 The practical consequence: **installing your CA into the operating system store is
 necessary and not sufficient.** It reaches some installations and silently misses others,
@@ -63,7 +68,8 @@ with step 3 rather than assuming.
 | `curl`, `openssl` | ✅ yes | they read the system bundle |
 | Go programs (including `crane`) | ✅ yes | Go reads the system bundle on Linux |
 | Python from **apt**, with apt's `python3-certifi` | ✅ yes | Debian points `certifi` at the system bundle |
-| Python in a **venv**, or any `pip install certifi` | ❌ **no** | `certifi` ships its own bundle inside the environment |
+| **`pip` in a venv** — the pip `python3 -m venv` ships, or one upgraded from PyPI | ✅ yes | pip reads the OS store itself (upstream pip through `truststore`, its default since pip 24.2 on Python 3.10+; switch that off with `--use-deprecated=legacy-certs` and it fails). Also true of a venv created *before* the CA was installed. Not measured: Python 3.9 or older, or a pip older than 24.2 installed from PyPI |
+| **Python code in a venv** calling `requests`, or anything using a pip-installed `certifi` | ❌ **no** | `certifi` ships its own bundle inside the environment. This is your application's traffic, not package installs |
 | **`uv`** (installer script) | ❌ **no** | bundled roots; it does not consult the OS store |
 | JDK from **apt** | ✅ yes | apt pulls `ca-certificates-java`, whose hook copies the anchor *into* the JVM's own `cacerts` whenever `update-ca-certificates` runs |
 | JDK from a **tarball** (Temurin 21; the same artefact sdkman and most CI images use) | ❌ **no** | it ships its own `lib/security/cacerts`, which `update-ca-certificates` never touches — the anchor is measurably absent from it |
@@ -96,7 +102,11 @@ needs; otherwise a tool that replaces stops verifying public registries.
 ## Step 3 — check an installation instead of guessing which row it is
 
 ```
-# Python: which bundle is THIS interpreter using?  (run it inside the venv you care about)
+# pip: does THIS pip reach your server?  (run it inside the venv you care about)
+pip download --no-deps --no-cache-dir -d /tmp/trustcheck \
+    --index-url https://your-host.example/simple/ some-package
+
+# Python code using certifi: which bundle is it using?  (run it inside the venv)
 python3 -c 'import certifi; print(certifi.where())'
 
 # JVM: is the anchor in THIS JDK's keystore?
@@ -106,8 +116,11 @@ keytool -list -cacerts -storepass changeit | grep -i your-ca
 curl -sS https://your-host.example/ -o /dev/null && echo trusted
 ```
 
-A path under `/etc/ssl/` in the first command means the OS store is in use and step 1
-covered it; a path under `site-packages/` means it did not.
+A certificate error from the pip command means step 1 did not reach that pip; any other
+answer (including "no matching distribution") means the connection was trusted. For the
+`certifi` command, a path under `/etc/ssl/` means the OS store is in use and step 1 covered
+it; a path under `site-packages/` means it did not. `certifi.where()` says nothing about pip,
+which does not use it for this.
 
 ## What this page does not cover
 
@@ -116,8 +129,10 @@ covered it; a path under `site-packages/` means it did not.
   what was run.
 - **macOS, Windows, RHEL-family Linux** — not measured, apart from the one Go/Windows fact
   above. The per-platform work is tracked in #143.
-- **Per-user installations** (`nvm`, `sdkman`, `pyenv`, a developer's own venvs). The
-  Ubuntu measurement ran as root, so these are under-represented by construction, and they
-  are exactly the installations a system-wide install cannot see.
-- **Keeping it true over time.** A tool upgrade can replace a vendored bundle; a new venv
-  starts without your CA. Nothing here re-checks a machine after the day it was set up.
+- **Per-user installations** (`nvm`, `sdkman`, `pyenv`). The Ubuntu measurement ran as
+  root, so these are under-represented by construction, and they are exactly the
+  installations a system-wide install cannot see. (A developer's own venv is covered for
+  pip, above; the code running in it is not.)
+- **Keeping it true over time.** A tool upgrade can replace a vendored bundle, and a new
+  tarball install starts without your CA. Nothing here re-checks a machine after the day it
+  was set up.

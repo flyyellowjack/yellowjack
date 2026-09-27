@@ -548,7 +548,7 @@ func TestOverrideDenySaysWhatItReaches(t *testing.T) {
 		t.Fatalf("deny redirected to %q, want the queue", rr.Header().Get("Location"))
 	}
 	notice := loc.Query().Get("notice")
-	for _, want := range []string{"is-number", "every path", "D272", "deny list", "approval service"} {
+	for _, want := range []string{"is-number", "every path", "its own policy would allow", "deny list", "approval service"} {
 		if !strings.Contains(notice, want) {
 			t.Errorf("deny notice lacks %q: %q", want, notice)
 		}
@@ -609,7 +609,7 @@ func TestQueueWriteBannerSaysWhatARulingReaches(t *testing.T) {
 	get.SetBasicAuth("admin", "s3cret")
 	srv.ServeHTTP(rr, get)
 	body := rr.Body.String()
-	for _, want := range []string{"What a ruling reaches", "every path", "D272", "deny list"} {
+	for _, want := range []string{"What a ruling reaches", "every path", "would allow on its own", "deny list"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("write-enabled queue page lacks %q", want)
 		}

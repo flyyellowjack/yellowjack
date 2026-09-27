@@ -32,7 +32,7 @@ var errNoGitBinary = errors.New(
 	"this console image ships without git, so it cannot write the operator lists: " +
 		"build or pull the console-git image target (docker build --target console-git), " +
 		"or leave CONSOLE_LIST_REPO unset to hide the editor. The default image is " +
-		"distroless and has no git on purpose (D199) -- git plus a shell in the one " +
+		"distroless and has no git on purpose -- git plus a shell in the one " +
 		"service holding the operator credential is a footprint we decline by default")
 
 // lookGit reports whether a git binary is runnable. It is a var so a test can

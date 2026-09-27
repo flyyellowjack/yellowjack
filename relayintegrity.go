@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/fips140"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"hash"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -267,9 +269,33 @@ func (p *proxyServer) expectedDigestFor(r *http.Request, resp *http.Response) (a
 	case "oci":
 		return expectedBlobDigest(r.URL.EscapedPath())
 	case "maven":
-		return mavenHeaderDigest(resp.Header)
+		strict := fips140.Enforced()
+		algo, want, ok := mavenHeaderDigest(resp.Header, !strict)
+		if !ok && strict && resp.Header.Get("X-Checksum-Sha1") != "" {
+			p.warnSHA1UnderStrictFIPS()
+		}
+		return algo, want, ok
 	}
 	return "", "", false
+}
+
+// warnSHA1UnderStrictFIPS logs, ONCE per process, that a Maven repository offered only a
+// SHA-1 checksum while GODEBUG=fips140=only forbids computing one (D377). Before this,
+// the SHA-1 hasher failed mid-relay and the client got a 200 with a TRUNCATED jar (measured
+// against Central: 32768 of 384581 bytes, logged as a short transfer), on every artifact
+// Central serves. Now the artifact relays unverified, exactly like a repository that sends no
+// checksum header -- the coverage gap this file already names -- and the operator is told
+// why. Measured 2026-09-27: Maven Central sends X-Checksum-SHA1 and never a SHA-256 header,
+// and publishes a .sha256 sidecar for 9 of 25 popular artifacts at their latest version and
+// 0 of 25 at their oldest, so fetching sidecars would not close the gap.
+func (p *proxyServer) warnSHA1UnderStrictFIPS() {
+	if !p.sha1StrictWarned.CompareAndSwap(false, true) {
+		return
+	}
+	log.Printf("WARNING: FIPS 140-only mode (GODEBUG=fips140=only) forbids SHA-1, and upstream %s "+
+		"offered only a SHA-1 checksum, so Maven artifacts from it relay WITHOUT the gate's integrity "+
+		"check (the client still checks). A repository that sends X-Checksum-Sha256, such as Artifactory, "+
+		"is still verified. Logged once.", p.cfg.UpstreamRegistry)
 }
 
 // ---- Maven (#64, third ecosystem) ------------------------------------------------------
@@ -316,9 +342,13 @@ var mavenChecksumHeaders = []struct{ header, algo string }{
 // mavenHeaderDigest reads the strongest well-formed checksum header. Hex is lower-cased,
 // as for PyPI and for the same reason: it encodes bytes, and case carries no meaning.
 // A malformed value is skipped rather than failing the check, so a repository that
-// spells one header oddly still gets checked against the other.
-func mavenHeaderDigest(h http.Header) (algo, want string, ok bool) {
+// spells one header oddly still gets checked against the other. allowSHA1 is false under
+// FIPS 140-only mode, where computing SHA-1 panics (D377).
+func mavenHeaderDigest(h http.Header, allowSHA1 bool) (algo, want string, ok bool) {
 	for _, c := range mavenChecksumHeaders {
+		if c.algo == "sha1" && !allowSHA1 {
+			continue
+		}
 		v := strings.ToLower(strings.TrimSpace(h.Get(c.header)))
 		spec, known := digestAlgos[c.algo]
 		if !known {

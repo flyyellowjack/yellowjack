@@ -200,7 +200,7 @@ func (s *pgStore) migrate() error {
 			reason     TEXT NOT NULL DEFAULT '',
 			source_ip  TEXT NOT NULL DEFAULT '',
 			at         TIMESTAMPTZ NOT NULL,
-			-- The verdict's inputs (#28). threshold is NULLABLE and that is load-bearing:
+			-- The verdict's inputs. threshold is NULLABLE and that is load-bearing:
 			-- NULL means "no threshold was in play", which is the truth for a verdict
 			-- decided before any scoring (a known-malware refusal). A NOT NULL DEFAULT 0
 			-- would render as "the bar was zero", the most misleading value available.
@@ -249,7 +249,7 @@ func (s *pgStore) migrate() error {
 	// The gate's structured attribution (D182), stored from #142 on. Rows written before
 	// then read back as '' -- "not recorded", which the console must never render as
 	// "no source", so the column is a plain string and '' is its own state.
-	for _, col := range []string{"deny_kind", "rule", "source", "taken", "mode", "override"} {
+	for _, col := range []string{"deny_kind", "rule", "source", "taken", "mode", "override", "version"} {
 		if _, err := s.db.Exec(`ALTER TABLE events ADD COLUMN IF NOT EXISTS ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
 			return fmt.Errorf("migrate events %s: %w", col, err)
 		}
@@ -441,10 +441,10 @@ func (s *pgStore) AppendEvent(e AuditEvent) (AuditEvent, error) {
 		threshold = sql.NullFloat64{Float64: *e.Threshold, Valid: true}
 	}
 	err := s.db.QueryRow(`
-		INSERT INTO events (package, ecosystem, action, score, reason, source_ip, at, threshold, policy_digest, deny_kind, rule, source, taken, mode, scored_checks, total_checks, computed_without, override)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		INSERT INTO events (package, ecosystem, action, score, reason, source_ip, at, threshold, policy_digest, deny_kind, rule, source, taken, mode, scored_checks, total_checks, computed_without, override, version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id`,
-		e.Package, e.Ecosystem, string(e.Action), score, e.Reason, e.SourceIP, e.At, threshold, e.PolicyDigest, e.DenyKind, e.Rule, e.Source, e.Taken, e.Mode, e.ScoredChecks, e.TotalChecks, joinChecks(e.ComputedWithout), e.Override,
+		e.Package, e.Ecosystem, string(e.Action), score, e.Reason, e.SourceIP, e.At, threshold, e.PolicyDigest, e.DenyKind, e.Rule, e.Source, e.Taken, e.Mode, e.ScoredChecks, e.TotalChecks, joinChecks(e.ComputedWithout), e.Override, e.Version,
 	).Scan(&e.ID)
 	if err != nil {
 		return AuditEvent{}, err
@@ -633,7 +633,7 @@ func eventWhere(f EventFilter) (string, []any) {
 // eventColumns is the one column list every events read uses, in scanEvent's order. A
 // column added to the table has to be added here AND to scanEvent, and the round-trip
 // test is what proves the two agree.
-const eventColumns = `id, package, ecosystem, action, score, reason, source_ip, at, threshold, policy_digest, deny_kind, rule, source, taken, mode, scored_checks, total_checks, computed_without, override`
+const eventColumns = `id, package, ecosystem, action, score, reason, source_ip, at, threshold, policy_digest, deny_kind, rule, source, taken, mode, scored_checks, total_checks, computed_without, override, version`
 
 // scanEvent reads one events row into an AuditEvent, mapping the nullable score
 // column to the nil-means-no-score pointer. Shared by ListEvents and StreamEvents.
@@ -647,7 +647,7 @@ func scanEvent(rows *sql.Rows) (AuditEvent, error) {
 	)
 	if err := rows.Scan(&e.ID, &e.Package, &e.Ecosystem, &action, &score, &e.Reason, &e.SourceIP, &e.At,
 		&threshold, &e.PolicyDigest, &e.DenyKind, &e.Rule, &e.Source, &e.Taken, &e.Mode,
-		&e.ScoredChecks, &e.TotalChecks, &without, &e.Override); err != nil {
+		&e.ScoredChecks, &e.TotalChecks, &without, &e.Override, &e.Version); err != nil {
 		return AuditEvent{}, err
 	}
 	e.Action = AuditAction(action)

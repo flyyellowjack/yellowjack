@@ -78,3 +78,25 @@ func TestPolicyRulesFollowTheChosenEcosystem(t *testing.T) {
 		t.Errorf("the OCI tab does not show OCI's own rules")
 	}
 }
+
+// Two ecosystems that each enforce a known-malware list: the tile is their TOTAL and the
+// line under it says whose is whose. Found rehearsing the demo with a real feed on an npm
+// and a PyPI gate (2026-09-25): the tile showed 11,749, PyPI's count alone, beside
+// "Enforced on npm, PyPI" -- the loop kept whichever ecosystem it visited last, while the
+// npm gate was enforcing 221,584.
+func TestOverviewFeedTileTotalsEveryEcosystem(t *testing.T) {
+	gates := []instanceHealth{
+		gateOf("npm-1", "npm", "aaaa111", "221584 enforced (198003 package-wide, 23581 version-pinned), sha256:x", "off"),
+		gateOf("pypi-1", "pypi", "dddd444", "11749 enforced (6372 package-wide, 5377 version-pinned), sha256:x", "off"),
+		gateOf("oci-1", "oci", "bbbb222", "off", "off"),
+	}
+	body := getPage(t, newTestServer(&fakeApproval{health: gates}), "/")
+	for _, want := range []string{">233,333<", "Enforced on npm 221,584, PyPI 11,749; off on OCI."} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview lacks %q", want)
+		}
+	}
+	if strings.Contains(body, ">11,749<") {
+		t.Error("the tile shows one ecosystem's count as though it were the whole list")
+	}
+}

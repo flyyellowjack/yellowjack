@@ -27,9 +27,11 @@ global:
   #  - name: regcred
 
 images:
-  # ⚠️ No public image is published before launch. Build from the repo Dockerfiles and
+  # This chart, as it sits in the repository, builds from source: build the repo Dockerfiles,
   # push to a registry your cluster can pull from, then set repository/tag (and digest —
   # a tag is a mutable pointer; the digest is what pins what you tested).
+  # A RELEASED chart (oci://ghcr.io/flyyellowjack/charts/yellowjack, docs/RELEASING.md) has
+  # these three blocks already pointing at the published images, by tag and digest.
   firewall:
     repository: yellowjack/firewall
     tag: dev
@@ -57,6 +59,17 @@ imagePullPolicy: IfNotPresent
 # an organisation with npm and container traffic runs two gates — two entries here, two
 # Deployments, two Services — from the same image. That is the shape D210 asks for and it
 # is also what a real deployment looks like.
+#
+# Settings EVERY gate gets unless its own `env` sets the same key. They live here, not in
+# the npm entry below, because Helm replaces a list whole: writing your own `gates` entry
+# (to change the upstream, say) would otherwise drop them without a word.
+gateDefaults:
+  env:
+    # `off`, not `stub`: the chart gates rollout on /readyz, and D273 makes `stub`
+    # report NOT READY -- it fabricates a flat 7.5 rather than declining to score.
+    # The binary's own default is `stub`, so a gate without this never becomes ready.
+    FW_SCORECARD_MODE: "off"
+    FW_SCORE_THRESHOLD: "0.0"
 gates:
   - name: npm
     ecosystem: npm
@@ -81,14 +94,9 @@ gates:
       deny: |
         # Packages refused outright. Put your internal package names here so a public
         # package claiming one of them is refused (dependency confusion).
-    # Any FW_* setting, verbatim. Every one is documented in docs/CONFIGURATION.md;
-    # zero are required (the config surface is 0-required by design).
+    # Any FW_* setting, verbatim, laid over gateDefaults.env above. Every one is documented
+    # in docs/CONFIGURATION.md; zero are required (the config surface is 0-required by design).
     env:
-      # `off`, not `stub`: the chart gates rollout on /readyz, and D273 makes `stub`
-      # report NOT READY -- it fabricates a flat 7.5 rather than declining to score.
-      # Leaving `stub` here would ship a chart whose pods never become ready.
-      FW_SCORECARD_MODE: "off"
-      FW_SCORE_THRESHOLD: "0.0"
       FW_MODE: enforce
       # Refuse releases younger than this many days. 14 is the product default (D335);
       # 0 turns it off. The one control that needs neither a list nor a scanner (D192).
@@ -109,11 +117,9 @@ gates:
   #     allow: ""
   #     deny: |
   #       # An entry covers the WHOLE repository, every tag (#128).
-  #   env:
-  #     FW_SCORECARD_MODE: "off"
-  #     FW_SCORE_THRESHOLD: "0.0"
-  #     # No FW_MIN_RELEASE_AGE_DAYS for images: a registry publishes no trustworthy
-  #     # push time and real images report the 1970 epoch (#127).
+  #   # No env needed: gateDefaults supplies scoring-off, and FW_MIN_RELEASE_AGE_DAYS is
+  #   # left unset because the gate's own default for OCI is 0 -- a registry publishes no
+  #   # trustworthy push time and real images report the 1970 epoch (#127).
   #   service: { type: ClusterIP, port: 8080 }
 
 # ── Approval control plane ────────────────────────────────────────────────────────
@@ -222,6 +228,16 @@ postgresSecurityContext:
 # console. Requires a CNI that enforces NetworkPolicy; harmless where none does.
 networkPolicy:
   enabled: true
+
+# Keeping a gate serving through node maintenance and node loss. Both apply only to a gate
+# with 2 or more replicas; a single replica has nothing to spread and nothing to keep.
+gateAvailability:
+  # A PodDisruptionBudget per gate (maxUnavailable: 1), so `kubectl drain` evicts one
+  # replica at a time instead of both at once.
+  podDisruptionBudget: true
+  # Prefer one replica per node (a soft topology spread): losing one node leaves a replica
+  # serving. Soft, so a single-node cluster still schedules every replica.
+  spreadAcrossNodes: true
 
 nameOverride: ""
 fullnameOverride: ""

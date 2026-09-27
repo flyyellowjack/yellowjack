@@ -76,6 +76,16 @@ type Decision struct {
 	// than a bool because the useful question is never "was there an override" but
 	// "which finding was overridden, for which release".
 	Override string
+	// Version is the RELEASE this verdict concerns, when the request named one: an npm
+	// tarball, a PyPI file, a Maven artifact path, an OCI tag or digest. Empty for a
+	// verdict about the package as a whole (an npm packument, a PyPI index), which names
+	// no single release -- never a guess such as "latest".
+	//
+	// D363: every decision is about a specific release. Before this the version reached
+	// the audit record only inside Reason's prose, so "which releases of X did we refuse"
+	// was a text search over sentences, and a record of an allowed Maven jar did not say
+	// which jar.
+	Version string
 }
 
 // withCoverage attaches what a score was computed over to the decision that rests on
@@ -361,8 +371,15 @@ func NewFirewall(cfg Config) (*Firewall, error) {
 			return nil, fmt.Errorf("FW_MALWARE_FEED_URL is set but FW_MALWARE_LIST is not: the pulled snapshot " +
 				"is installed at FW_MALWARE_LIST, so there is nowhere to put it")
 		}
-		if u, err := url.Parse(cfg.MalwareFeedURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		u, err := url.Parse(cfg.MalwareFeedURL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			return nil, fmt.Errorf("FW_MALWARE_FEED_URL %q is not an http(s) URL", cfg.MalwareFeedURL)
+		}
+		// A subscription key over plain HTTP is a key anyone on the path can copy. Loopback is
+		// the one exception: a mirror on the same host, and the tests.
+		if cfg.MalwareFeedAuthFile != "" && u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+			return nil, fmt.Errorf("FW_MALWARE_FEED_AUTH_FILE is set but FW_MALWARE_FEED_URL %q is plain http: the "+
+				"access key would travel in cleartext; use https", cfg.MalwareFeedURL)
 		}
 	}
 	if feedKey != nil && cfg.MalwareListPath == "" {
@@ -378,6 +395,7 @@ func NewFirewall(cfg Config) (*Firewall, error) {
 		fetcher = &feedFetcher{
 			url: cfg.MalwareFeedURL, path: cfg.MalwareListPath, key: feedKey,
 			client:  &http.Client{Timeout: 2 * time.Minute, Transport: withUserAgent(tr)},
+			cred:    feedCredential(cfg.MalwareFeedAuthFile),
 			logf:    log.Printf,
 			inForce: func() *malwareList { return nil }, // nothing is in force yet
 		}
@@ -664,6 +682,7 @@ func (f *Firewall) auditVerdict(pkg, sourceIP string, d Decision) {
 		Source:          d.Source,
 		Override:        d.Override,
 		SourceIP:        sourceIP, // observed connecting peer; "" when unobserved
+		Version:         d.Version,
 		Threshold:       threshold,
 		PolicyDigest:    f.policyDigestNow(),
 	})
@@ -840,38 +859,41 @@ func (f *Firewall) pinnedMalwareOnPath(pkgName, path string) (Decision, bool) {
 	return f.pinnedMalwareVerdict(pkgName, version, known)
 }
 
-// D312's ruling, applied: *"if the administrator allows it, it is allowed."*
+// D312's ruling, applied: *"if the administrator allows it, it is allowed."* D367 settled
+// what "it" is: *"the admin is always right, even if they're wrong"*.
 //
-// An operator allow entry that NAMES A RELEASE outranks a known-malware advisory for that
-// release. The administrator looked at that artifact and decided; we serve it, and we say
+// An operator allow entry outranks a known-malware advisory for every release it covers
+// (operatorList.covers): a pinned entry covers the release it names, and a BARE NAME covers
+// every release, future ones included. The administrator decided; we serve it, and we say
 // so loudly — the organisation still gets told (D312's second condition), because an
 // override that leaves no record is indistinguishable from a gate that missed something.
 //
-// ⚠️ THREE THINGS THIS DELIBERATELY DOES NOT DO, each of them the harm D312 itself names.
+// D367 REVERSED the narrow reading this function shipped with (D328: a name-scoped allow
+// did not override, because it extends a judgement to releases that did not exist yet).
+// D367 rejected that recommendation on purpose: *"if the admin whitelists all future
+// versions of a package, that's dumb, but they did it, their problem, not ours"* — the
+// product must not second-guess an explicit instruction. The defence against a careless
+// entry is change control over the list file (it lives in git), not a silent narrowing.
 //
-//  1. A NAME-scoped allow does not override an advisory. The administrator who wrote
-//     "left-pad" in March judged what they could see in March; extending that to the
-//     release hijacked in September attributes to them a decision they never made, and
-//     then cites their authority as the reason to serve malware. The refusal tells them
-//     to pin the release if that is what they mean. (D312 does not say this in so many
-//     words, and it is the one reading in this file that is mine rather than his — put to
-//     him as a question rather than assumed.)
-//  2. It does not apply when the version is UNKNOWN. An override is an instruction about
-//     one artifact; a request we cannot attribute to a release is not that artifact, and
-//     failing open there would hand an attacker who can break the join exactly the
-//     release the advisory names.
-//  3. It does not override the OPERATOR'S OWN deny list. Two instructions from the same
-//     authority, and the refusing one wins — unchanged from the name-scoped rule.
+// ⚠️ TWO THINGS THIS STILL DOES NOT DO.
+//
+//  1. A PINNED entry does not reach a request whose version is UNKNOWN. It is an
+//     instruction about one artifact, and a request we cannot attribute to a release is
+//     not that artifact; failing open there would hand an attacker who can break the join
+//     exactly the release the advisory names. A bare name has no such limit: it names
+//     every release, so which one this is does not matter.
+//  2. It does not override the OPERATOR'S OWN deny list. Two instructions from the same
+//     authority, and the refusing one wins — including a version-scoped deny when the
+//     version is unknown, which fails closed exactly as operatorVersionVerdict does.
 //
 // The audit record and the console carry the override (Decision.Override), so "we block
-// known malware" becomes "…unless an administrator has explicitly allowed that release",
-// which is the bounded claim D312 asked to be written down before marketing writes the
-// other one.
+// known malware" becomes "…unless an administrator has explicitly allowed it", which is
+// the bounded claim D312 asked to be written down before marketing writes the other one.
 func (f *Firewall) adminAllowsRelease(pkgName, version string, known bool) bool {
-	if !known || version == "" {
-		return false
-	}
-	if !f.allow().hasVersion(f.cfg.Ecosystem, pkgName, version) {
+	eco := f.cfg.Ecosystem
+	allow := f.allow()
+	byName := allow.has(eco, pkgName)
+	if !byName && (!known || version == "" || !allow.hasVersion(eco, pkgName, version)) {
 		return false
 	}
 	// THE OPERATOR'S OWN DENY STILL WINS, and it has to be asked HERE rather than left to
@@ -880,19 +902,30 @@ func (f *Firewall) adminAllowsRelease(pkgName, version string, known bool) bool 
 	// this feature adds. Found by TestTheOperatorsOwnDenyStillOutranksTheirAllow, which
 	// was red on the first run for this reason.
 	deny := f.deny()
-	if deny.has(f.cfg.Ecosystem, pkgName) || deny.hasVersion(f.cfg.Ecosystem, pkgName, version) {
+	if deny.has(eco, pkgName) {
 		return false
 	}
-	return true
+	if known && version != "" {
+		return !deny.hasVersion(eco, pkgName, version)
+	}
+	// Unknown version: a version-scoped deny for this package might name it, so fail
+	// closed rather than let a broken join choose between the operator's two entries.
+	return !deny.hasAnyVersion(eco, pkgName)
 }
 
 // overrideNote is the sentence that travels with an overriding decision: into the log, the
 // audit record and the console. One place, so the three cannot describe it differently.
+// An empty version means the override came from a bare-name entry for a request whose
+// release could not be identified, or for an advisory that condemns every release.
 func overrideNote(pkgName, version, advisory string) string {
-	return fmt.Sprintf("served by administrator override: version %q of %q is on this organisation's "+
-		"allow list, which outranks the known-malware advisory %s naming it (D312). The advisory still "+
+	subject := fmt.Sprintf("version %q of %q is", version, pkgName)
+	if version == "" {
+		subject = fmt.Sprintf("%q is, by name (every version),", pkgName)
+	}
+	return fmt.Sprintf("served by administrator override: %s on this organisation's "+
+		"allow list, which outranks the known-malware advisory %s naming it. The advisory still "+
 		"stands; the allow list entry is a local decision to install this release anyway",
-		version, pkgName, advisory)
+		subject, advisory)
 }
 
 // pinnedMalwareVerdict is the shared rule: given a package and the version this
@@ -902,6 +935,14 @@ func (f *Firewall) pinnedMalwareVerdict(pkgName, version string, known bool) (De
 	if !known {
 		if !f.malwareFeed().hasPinned(f.cfg.Ecosystem, pkgName) {
 			return Decision{}, false
+		}
+		// D367: a BARE-NAME allow names every release, so which release this is does not
+		// matter. adminAllowsRelease still fails closed if the operator's deny list names
+		// any version of the package, since that entry might be this one.
+		if f.adminAllowsRelease(pkgName, "", false) {
+			note := overrideNote(pkgName, "", "that names specific versions of it")
+			log.Printf("POLICY [administrator-override] %s", note)
+			return Decision{Allowed: true, Override: note, Reason: note}, true
 		}
 		return Decision{
 			Allowed: false,
@@ -917,27 +958,19 @@ func (f *Firewall) pinnedMalwareVerdict(pkgName, version string, known bool) (De
 	if !found {
 		return Decision{}, false
 	}
-	// D312: the administrator's own instruction about THIS release outranks the advisory.
+	// D312/D367: the administrator's allow outranks the advisory for every release it
+	// covers -- this release by pin, or every release by bare name.
 	if f.adminAllowsRelease(pkgName, version, true) {
 		note := overrideNote(pkgName, version, e.ID)
 		log.Printf("POLICY [administrator-override] %s", note)
-		return Decision{Allowed: true, Override: note, Reason: note}, true
-	}
-	// A NAME-scoped allow reaching a version-pinned advisory: refused, and said out loud
-	// with the way to say what they mean. Without this the operator sees their entry
-	// ignored and nothing anywhere explains it — the package-wide branch's conflict line
-	// cannot fire here, because this advisory names releases rather than the package.
-	if f.allow().has(f.cfg.Ecosystem, pkgName) {
-		log.Printf("POLICY %q is on the operator allow-list by NAME and version %q is named by the "+
-			"known-malware advisory %s -- REFUSED: a name-scoped allow covers releases nobody has looked "+
-			"at. Pin the release you judged (\"%s\") to override this advisory for it.",
-			pkgName, version, e.ID, joinOperatorEntry(f.cfg.Ecosystem, pkgName, version))
+		return Decision{Allowed: true, Override: note, Reason: note, Version: version}, true
 	}
 	return Decision{
 		Allowed: false,
 		Deny:    denyKnownMalware,
 		Rule:    e.ID,
 		Source:  sourceMalwareFeed,
+		Version: version,
 		Reason: fmt.Sprintf("version %q of %q is listed as known malware (%s); refused without contacting upstream",
 			version, pkgName, e.ID),
 	}, true
@@ -978,6 +1011,7 @@ func (f *Firewall) operatorVersionVerdict(pkgName, version string, known bool) (
 		Deny:    denyOperator,
 		Rule:    "deny-list:" + entry,
 		Source:  sourceDenyList,
+		Version: version,
 		Reason: fmt.Sprintf("version %q of %q is on this organisation's deny list; refused without "+
 			"contacting upstream. Other versions of %q are not affected by this entry. This is a local "+
 			"policy decision, not a published malware advisory -- ask whoever maintains the firewall's "+
@@ -987,6 +1021,23 @@ func (f *Firewall) operatorVersionVerdict(pkgName, version string, known bool) (
 
 // operatorVersionOnPath is operatorVersionVerdict for an ecosystem whose REQUEST PATH
 // names the release although its identity does not -- Maven. Mirrors pinnedMalwareOnPath.
+// requestedVersion is the release a request path names, for the ecosystems whose path or
+// identity carries one without a network join: Maven's artifact path, OCI's tag or digest.
+// "" otherwise -- including npm and PyPI byte paths, whose version the verdicts computed
+// on those paths set themselves, because they already had to parse it.
+func (f *Firewall) requestedVersion(pkgName, path string) string {
+	if vp, ok := f.eco.(versionedPath); ok {
+		if v, known := vp.VersionFromPath(path); known {
+			return v
+		}
+		return ""
+	}
+	if v, known := identityVersion(f.cfg.Ecosystem, pkgName); known {
+		return v
+	}
+	return ""
+}
+
 func (f *Firewall) operatorVersionOnPath(pkgName, path string) (Decision, bool) {
 	vp, ok := f.eco.(versionedPath)
 	if !ok {
@@ -1032,17 +1083,23 @@ func (f *Firewall) Evaluate(pkgName string) Decision {
 		// "we vouch for this" must not override "someone published an advisory naming
 		// it" -- but from the outside it looks like the allow-list is broken, which is
 		// how an operator ends up editing the wrong file for an afternoon.
-		// Two shapes of allow entry reach here, and they are refused for DIFFERENT
-		// reasons. Saying which is what stops an operator editing the wrong file.
+		// D367 ("the admin is always right, even if they're wrong"): a BARE-NAME allow
+		// outranks even a package-wide advisory. It is served loudly -- the override is
+		// logged per pull and carried on the decision into the audit record -- and the
+		// operator's own deny list still wins, which adminAllowsRelease asks.
+		if f.allow().has(f.cfg.Ecosystem, pkgName) && f.adminAllowsRelease(pkgName, "", false) {
+			note := overrideNote(pkgName, "", e.ID)
+			log.Printf("POLICY [administrator-override] %s", note)
+			return Decision{Allowed: true, Override: note, Reason: note}
+		}
 		switch {
 		case f.allow().has(f.cfg.Ecosystem, pkgName):
-			// A NAME-scoped allow. D312 gives the administrator the last word about an
-			// artifact they judged; a bare name judges every future release too, which
-			// is the decision they did not make. Tell them how to say what they mean.
+			// The bare-name allow lost to the operator's OWN deny list, not to the feed:
+			// two instructions from one authority, and the refusing one wins. Said out
+			// loud, because from outside it looks like the allow entry is being ignored.
 			log.Printf("POLICY %q is on the operator allow-list by NAME and in the known-malware feed "+
-				"(%s) -- REFUSED: a name-scoped allow covers releases the advisory names that nobody has "+
-				"looked at. Pin the release you judged (\"%s@<version>\") to override this advisory for "+
-				"it, or remove the package from the feed if this is a false positive.", pkgName, e.ID, pkgName)
+				"(%s), and this organisation's deny list also names it -- REFUSED: the deny list "+
+				"outranks the allow list, so the allow entry cannot override the advisory.", pkgName, e.ID)
 		case f.allow().hasAnyVersion(f.cfg.Ecosystem, pkgName):
 			// A VERSION-scoped allow exists, and this control point has no version to
 			// match it against: the advisory condemns every release, so the refusal is
@@ -2255,7 +2312,7 @@ func (f *Firewall) scanRepo(repo string) (float64, scoreCoverage, error) {
 	}
 	if sr.Partial() {
 		log.Printf("scanner: partial report for %s accepted: %.1f over %d of %d checks; every required check scored; "+
-			"computed without: %s (#133)", repo, sr.Score, sr.ScoredChecks, sr.TotalChecks,
+			"computed without: %s", repo, sr.Score, sr.ScoredChecks, sr.TotalChecks,
 			strings.Join(erroredCheckNames(sr.Checks), ", "))
 	}
 	return sr.Score, coverageOf(sr), nil

@@ -176,7 +176,7 @@ func scan(ctx context.Context, runner scorecardRunner, repo string) (ScanResult,
 	// would make the exit status the thing we trust, which is the defect being fixed.
 	if err != nil {
 		log.Printf("scan %s: scorecard exited non-zero but wrote a usable report (%d of %d checks scored); "+
-			"salvaged rather than discarded (#133). Its error was: %v", result.Repo, result.ScoredChecks, result.TotalChecks, err)
+			"salvaged rather than discarded. Its error was: %v", result.Repo, result.ScoredChecks, result.TotalChecks, err)
 	}
 	return result, nil
 }

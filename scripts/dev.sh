@@ -164,6 +164,7 @@ case "$task" in
     # verdicts stay four — a classifier that answered "fresh" to everything would
     # otherwise satisfy the happy cases.
     sh scripts/staleness_test.sh
+    sh scripts/release_test.sh
     # Base images must be pinned by digest (#22). OFFLINE on purpose: this reads the
     # Dockerfiles and contacts no registry, so it cannot go red because Docker Hub
     # rate-limited us — which is the failure that took every MR's e2e leg down on

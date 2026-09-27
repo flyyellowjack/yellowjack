@@ -2,9 +2,10 @@
 # `sh scripts/demo.sh up`, which creates ./.demo first; this file only mounts it.
 #
 # What it adds to the default stack, and nothing else:
-#   - the npm gate reads a known-malware feed and the operator's allow/block lists
+#   - the npm gate reads a signed known-malware feed and the operator's allow/block lists
 #     from ./.demo, so every kind of refusal the console explains can happen;
-#   - the console is the opt-in console-git image (D199) pointed at a git working tree
+#   - a PyPI gate on :8082 reading the same feed, so the demo covers pip as well as npm;
+#   - the console is the opt-in console-git image pointed at a git working tree
 #     of those same lists, so they can be edited from the console during the demo.
 #
 # Credentials are never written here: scripts/demo.sh generates them into
@@ -15,11 +16,47 @@ services:
       FW_MALWARE_LIST: "/etc/yellowjack/feed/malware.ndjson"
       FW_ALLOW_LIST: "/etc/yellowjack/lists/allow.txt"
       FW_DENY_LIST: "/etc/yellowjack/lists/deny.txt"
+      # The public half of the key the demo signed its feed with (scripts/demo.sh feed).
+      # Empty when the offline list is in force, which the gate then loads unverified.
+      FW_MALWARE_FEED_KEY: "${FW_MALWARE_FEED_KEY:-}"
     volumes:
       # Directories, not files: the console writes the lists by temp-file-and-rename,
       # which a file bind mount would never show the gate.
       - ./.demo/lists:/etc/yellowjack/lists:ro
       - ./.demo/feed:/etc/yellowjack/feed:ro
+
+  # A PyPI gate, so the demo covers pip as well as npm. Same image, FW_ECOSYSTEM=pypi, and
+  # the same signed known-malware feed (its PyPI rows are the ones this gate enforces).
+  # FW_PUBLIC_URL is the address the HOST's pip reaches it on: the gate rewrites the
+  # index's file links to /_files/ on that address so downloads come back through it.
+  firewall-pypi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FW_LISTEN_ADDR: ":8080"
+      FW_ECOSYSTEM: "pypi"
+      FW_UPSTREAM: "https://pypi.org"
+      FW_PUBLIC_URL: "http://127.0.0.1:8082"
+      FW_SCORECARD_MODE: "api"
+      FW_SCORE_THRESHOLD: "5.0"
+      FW_UNSCORABLE_POLICY: "block"
+      FW_APPROVAL_URL: "http://approval:8090"
+      FW_MALWARE_LIST: "/etc/yellowjack/feed/malware.ndjson"
+      FW_MALWARE_FEED_KEY: "${FW_MALWARE_FEED_KEY:-}"
+      # The release-age FLOOR, the other edge of the cooldown window. Without it a blocked
+      # dependency makes pip silently downgrade: charset-normalizer is currently unscorable
+      # (its repository moved), so pip backtracks to requests 2.25.1 from 2020, the last
+      # release that did not need it. Measured in the rehearsal of 2026-09-25. Five years
+      # holds that fallback back, so pip fails on the real blocker instead, which lands in
+      # Decisions for a person, and the demo's other packages are all younger than this.
+      FW_MAX_RELEASE_AGE_DAYS: "1825"
+    volumes:
+      - ./.demo/feed:/etc/yellowjack/feed:ro
+    depends_on:
+      - approval
+    ports:
+      - "8082:8080"
 
   console:
     build:

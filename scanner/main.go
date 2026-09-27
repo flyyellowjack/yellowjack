@@ -11,6 +11,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"yellowjack/fipsmode"
 )
 
 // The scanner is a RUN-ONCE container. It reads its inputs from the environment
@@ -37,6 +39,7 @@ func main() {
 
 	log.Printf("Yellow Jack scanner (run-once): repo=%s sink=%s", cfg.Repo, cfg.SinkURL)
 	log.Printf("  scorecard binary: %s", cfg.ScorecardBin)
+	log.Printf("  %s (our scanner binary only; the scorecard binary is upstream's prebuilt one)", fipsmode.Line())
 	if cfg.Token == "" {
 		log.Printf("  WARNING: GITHUB_TOKEN not set — real scans will hit GitHub rate limits fast")
 	}

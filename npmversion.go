@@ -351,7 +351,7 @@ func (p *proxyServer) relayNpmTarball(w http.ResponseWriter, r *http.Request, ta
 		serve()
 	case scan.Version != served:
 		reason := fmt.Sprintf("tarball declares version %s but was served as version %s%s", scan.Version, served, duplicates)
-		log.Printf("artifact %s -> refused: %s (#52)", pkg, reason)
+		log.Printf("artifact %s -> refused: %s", pkg, reason)
 		p.refuse(w, pkg, blockErrMsg, reason, notAReviewItem,
 			verdictMeta{Kind: "integrity", Rule: "tarball-version", Source: sourceIntegrity}, serve)
 	case !scan.Final:

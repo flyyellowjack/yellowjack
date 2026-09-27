@@ -499,7 +499,7 @@ func byteGateRuleset(cfg Config) Ruleset {
 				// line that already said report mode suppresses it. A rule name is
 				// operator-facing text: it states what fired and why, so it rots exactly
 				// like a comment when a new axis is added above it.
-				Name:   "reject: denied on a positive finding — blocks bytes in every BYTE-GATE mode (D72)",
+				Name:   "reject: denied on a positive finding — blocks bytes in every BYTE-GATE mode",
 				Match:  func(f Facts) bool { return hardDenyKind(f.Allowed, f.Deny) },
 				Action: ActionReject,
 			},

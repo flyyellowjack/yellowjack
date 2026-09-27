@@ -126,5 +126,8 @@ func (srv *server) listHealth(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []InstanceHealth{} // [] not null, so a client can range over it unguarded
 	}
+	// Annotated, not filtered: a replaced replica is still returned, with the name of the
+	// one that took over, and the caller decides what to show (replaced.go).
+	markReplaced(rows, time.Now().UTC(), defaultAlertParams().SilentAfter)
 	writeJSON(w, http.StatusOK, rows)
 }

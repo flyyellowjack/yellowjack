@@ -127,6 +127,10 @@
     th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-2); }
     tr:last-child td { border-bottom: none; }
     td.num, th.num { text-align: right; }
+    /* A wide table scrolls inside its own box instead of running past the page edge (a
+       1280-pixel projector clipped the audit log's Reason column). */
+    .tablewrap { overflow-x: auto; max-width: 100%; }
+    .digest { display: inline-block; max-width: 7ch; overflow: hidden; vertical-align: bottom; }
 
     .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
              font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--chip); color: var(--ink-3); }

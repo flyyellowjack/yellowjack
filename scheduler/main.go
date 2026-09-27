@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"yellowjack/fipsmode"
 )
 
 // The scheduler service: the firewall's target for on-demand ("local") scoring.
@@ -63,6 +65,7 @@ func main() {
 	s := newScheduler(l, selfURL, timeout, maxConcurrent)
 
 	log.Printf("Yellow Jack scheduler starting on %s", addr)
+	log.Printf("  %s", fipsmode.Line())
 	log.Printf("  launcher: %s", kind)
 	log.Printf("  scanner image: %s", image)
 	log.Printf("  self URL (containers report here): %s", selfURL)

@@ -140,7 +140,9 @@ audit record and the startup line carry), `approval service` (`FW_APPROVAL_URL`)
 here and in the log, never on the wire. The audit record carries the same three (`deny_kind`, `rule`, `source`), plus
 `taken` and `mode`: under `FW_MODE=report` a refused verdict is relayed anyway, and the record
 reads `action: block`, `taken: allow`, `mode: report` — distinguishable from a real block without
-reading a log line (#114).
+reading a log line (#114). It also carries `version`, the release the verdict concerned whenever
+the request named one (an npm tarball, a PyPI file, a Maven artifact, an OCI tag or digest), and no
+`version` key at all for a verdict about a whole package, such as an npm packument or a PyPI index.
 
 One exception, by protocol: a PyPI refusal is a PEP 592 **yank** inside a `200` index, because pip
 backtracks around a 403 but reads a yank reason out loud (D22). The index format has no field for a
@@ -308,6 +310,40 @@ scheduler on a host that runs nothing else you care about, do not publish its po
 (`127.0.0.1:8096` by default) beyond the network its own services sit on, and remember that
 anything able to reach the approval control plane can trigger scans (see the previous section
 and issue #13).
+
+### FIPS 140-3 mode
+
+Every Yellow Jack image (firewall, approval, console, cache, scheduler and scanner) is built
+against the **certified Go Cryptographic Module** (`GOFIPS140=v1.0.0`, which the Go toolchain
+lists as certified), and starts in FIPS mode. There is nothing to set.
+
+**Check it on the running service, not in this document.** Each service prints one line at
+startup:
+
+```
+FIPS 140-3 mode: ON (Go Cryptographic Module v1.0.0-c2097c7c)
+```
+
+The binary also records it: `go version -m <binary>` shows `GOFIPS140=v1.0.0-…` and
+`DefaultGODEBUG=fips140=on`. An image you build yourself with `--build-arg GOFIPS140=off`
+prints `off` instead. The published images never do, and a test fails if a Dockerfile stops
+building them this way.
+
+What this does **not** cover, stated so nobody assumes it:
+
+- **Two images carry a program we do not build.** The scanner image carries OpenSSF's prebuilt
+  `scorecard` binary, and the scheduler image carries the prebuilt `docker` command-line tool.
+  Only our own binary in those images is FIPS-built. Scorecard is optional
+  (`FW_SCORECARD_MODE=off`).
+- **Strict mode is not supported yet.** `GODEBUG=fips140=only` makes any non-approved algorithm
+  fail, and only the Maven path has been measured under it. The gate checks a Maven artifact
+  against the checksum header the repository sends. Maven Central sends only SHA-1, which strict
+  mode forbids, so under strict mode artifacts from Central relay **without** the gate's own
+  integrity check (the Maven client still checks), and the gate logs this once. A repository that
+  sends `X-Checksum-Sha256`, such as Artifactory, is still checked. Leave the default
+  (`fips140=on`), where SHA-1 is permitted and every Maven artifact is checked.
+- **Images from elsewhere** (the bundled evaluation PostgreSQL, your registry, your CA) are
+  outside this. Their FIPS status is their publisher's.
 
 ### Serving the gate over HTTPS: terminate TLS in front of it
 

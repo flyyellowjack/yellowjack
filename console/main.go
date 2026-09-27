@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"yellowjack/fipsmode"
 )
 
 func main() {
@@ -121,6 +123,7 @@ func main() {
 		mode = "overrides ENABLED (basic auth)"
 	}
 	log.Printf("Yellow Jack console starting on %s (approval=%s) — %s", cfg.listenAddr, cfg.approvalURL, mode)
+	log.Printf("  %s", fipsmode.Line())
 	if err := http.ListenAndServe(cfg.listenAddr, srv); err != nil {
 		log.Fatalf("console failed: %v", err)
 	}

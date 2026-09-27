@@ -252,7 +252,7 @@ func (v *stoppedDetailView) explain(e event) {
 		v.Override, v.PinTemplate = "pin", pinTemplate(e.Ecosystem, name)
 	case "operator-denied":
 		v.Happened = "Your organisation put this package on its own block list. That is a local decision, not a " +
-			"published advisory, and the gate refused it without contacting the registry."
+			"published advisory, and the gate refused it " + refusedWhere(e.Ecosystem) + "."
 		v.Instead = "Ask whoever maintains your block list, or use a different package."
 		v.InsteadHref, v.InsteadLabel = "/lists", "See the allow & block lists"
 		v.Override = "unlist"
@@ -303,6 +303,19 @@ func pinTemplate(ecosystem, name string) string {
 	return name + "@"
 }
 
+// refusedWhere says how far a list refusal got. On npm, Maven and OCI the gate answers
+// without contacting the registry at all. A PyPI refusal fetches the /simple/ index, because
+// it serves that page with every release marked yanked so pip prints the reason (the gate's
+// yankDeliveredReason corrects its own text the same way); what never happens is a package
+// FILE download. A console that told an auditor otherwise would be describing a gate that
+// does not exist.
+func refusedWhere(ecosystem string) string {
+	if strings.EqualFold(ecosystem, "pypi") {
+		return "after fetching the index to mark its releases yanked; no package file was downloaded"
+	}
+	return "without contacting the registry"
+}
+
 func stoppedFacts(e event) []stoppedFact {
 	var out []stoppedFact
 	rule := e.Rule
@@ -327,7 +340,7 @@ func stoppedFacts(e event) []stoppedFact {
 	}
 	switch e.DenyKind {
 	case "known-malware", "operator-denied":
-		out = append(out, stoppedFact{"Decided", "On the gate, without contacting the registry"})
+		out = append(out, stoppedFact{"Decided", "On the gate, " + refusedWhere(e.Ecosystem)})
 	}
 	if e.Taken == "allow" {
 		out = append(out, stoppedFact{"Enforcement", "Report mode: logged, then served"})

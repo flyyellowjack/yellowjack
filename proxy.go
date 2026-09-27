@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -28,9 +29,16 @@ type proxyServer struct {
 	firewall *Firewall
 	client   *http.Client
 
+	// draining is set on SIGTERM (shutdown.go): /readyz answers 503 while the gate keeps
+	// serving through the lameduck window, so routes are withdrawn before it stops.
+	draining atomic.Bool
+
 	// undatedWarned makes warnIfUpstreamUndated fire once per process (D337). An
 	// atomic.Bool rather than a sync.Once so the struct stays safe to copy in tests.
 	undatedWarned atomic.Bool
+
+	// sha1StrictWarned makes warnSHA1UnderStrictFIPS fire once per process (D377).
+	sha1StrictWarned atomic.Bool
 
 	// npmTarballRe matches a packument's `"tarball":"<upstream>/` prefix, the only
 	// field relayRewritten redirects through the artifact byte gate. nil for every
@@ -279,7 +287,7 @@ func (p *proxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if why := checkRequestPath(r.URL.EscapedPath()); why != pathOK {
 		// Logged at full volume: a legitimate package manager does not emit these, so
 		// this line is an attempted-evasion signal, not routine noise.
-		log.Printf("REFUSED ambiguous request path %q: %s — refusing rather than guessing which package the upstream would resolve (issue #59)",
+		log.Printf("REFUSED ambiguous request path %q: %s — refusing rather than guessing which package the upstream would resolve",
 			r.URL.EscapedPath(), why)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Yellowjack-Reason", sanitizeHeaderValue(string(why)))
@@ -340,7 +348,7 @@ func (p *proxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Both block and allow-but-log record it. A write reaching a pull-through
 			// firewall is either a misconfigured client or someone probing what else
 			// we forward, and neither should be silent.
-			log.Printf("WRITE REQUEST %s %s (FW_WRITE_POLICY=%s) — Yellow Jack is a pull-through gate; it does not evaluate publishes (issue #66)",
+			log.Printf("WRITE REQUEST %s %s (FW_WRITE_POLICY=%s) — Yellow Jack is a pull-through gate; it does not evaluate publishes",
 				r.Method, r.URL.EscapedPath(), policy)
 			if policy != writePolicyBlock {
 				// allow-but-log: recorded above, then relayed UNGATED for the same
@@ -582,6 +590,7 @@ func (p *proxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// An ALLOW is recorded after the relay, not before it: npm's version filter runs
 	// inside the relay and can still refuse this request, and the record must say what
 	// the client got (D346). A block is final here, so it is recorded at once.
+	decision.Version = p.firewall.requestedVersion(pkgName, r.URL.Path) // D363
 	if decision.Allowed {
 		hold.armed, hold.d = true, decision
 		srcIP := clientIP(r, p.trustedProxies)
@@ -651,6 +660,11 @@ func (p *proxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // reading a probe failure in `kubectl describe`; the status is for the orchestrator.
 func (p *proxyServer) serveReadyz(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if p.draining.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, "not ready: draining (shutting down; still serving until routes are withdrawn)\n")
+		return
+	}
 	if p.firewall != nil {
 		if reasons := p.firewall.notReady(); len(reasons) > 0 {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -702,14 +716,14 @@ func (p *proxyServer) serveUnidentified(w http.ResponseWriter, r *http.Request) 
 		// at full volume — it should be rare enough to be worth reading, and if it is
 		// not, that is itself the finding.
 		log.Printf("UNKNOWN REQUEST PATH %q -> RELAYED UNGATED by rule %q — no package identity and not a known %s registry endpoint; "+
-			"set FW_UNKNOWN_PATH_POLICY=block to refuse it (issue #58)",
+			"set FW_UNKNOWN_PATH_POLICY=block to refuse it",
 			path, rule.Name, p.cfg.Ecosystem)
 		p.proxyToUpstream(w, r, false, flowID{Kind: flowInfra})
 
 	default: // ActionReject — including the implicit terminal rule
 		reason := fmt.Sprintf("unrecognized request path: no package identity, and not a known %s registry endpoint (matched %q)",
 			p.cfg.Ecosystem, rule.Name)
-		log.Printf("REFUSED %q: %s — set FW_UNKNOWN_PATH_POLICY=allow-but-log to relay it with a log line instead (issue #58)",
+		log.Printf("REFUSED %q: %s — set FW_UNKNOWN_PATH_POLICY=allow-but-log to relay it with a log line instead",
 			path, reason)
 		// An unrecognized path is a CONFIGURATION question, not a package one, so the
 		// next step names the knob rather than a reviewer -- and names the operator as
@@ -938,6 +952,10 @@ func (p *proxyServer) refuse(w http.ResponseWriter, pkg, errMsg, reason, nextSte
 //     it: the developer got a 403 whose reason said "served by administrator override".
 //     Evaluate returns the same decision as an allow on OCI; the byte paths now agree.
 func (p *proxyServer) versionVerdict(w http.ResponseWriter, r *http.Request, pkg string, d Decision, serve func()) {
+	if d.Version == "" {
+		// The release window's Maven verdict names no version of its own; the path does.
+		d.Version = p.firewall.requestedVersion(pkg, r.URL.Path)
+	}
 	p.firewall.auditVerdict(pkg, clientIP(r, p.trustedProxies), d)
 	if d.Allowed {
 		serve()
@@ -1582,7 +1600,7 @@ func (p *proxyServer) proxyArtifactBytes(w http.ResponseWriter, r *http.Request,
 		// predicate, one owner. The rule NAME goes into the log line, so the
 		// operator reading it can find the line of policy that refused the bytes.
 		if action == ActionReject {
-			log.Printf("byte gate (allow-but-log) [hard-deny] %s -> BLOCKED by rule %q: %s [%s] — a hard deny blocks bytes in every BYTE-GATE mode (D72); FW_BYTE_GATE=off disables the gate entirely, and FW_MODE=report suppresses the refusal itself",
+			log.Printf("byte gate (allow-but-log) [hard-deny] %s -> BLOCKED by rule %q: %s [%s] — a hard deny blocks bytes in every BYTE-GATE mode; FW_BYTE_GATE=off disables the gate entirely, and FW_MODE=report suppresses the refusal itself",
 				pkg, rule.Name, decision.Reason, decision.Deny)
 			p.refuseDecision(w, pkg, decision, serve)
 			return
@@ -1608,7 +1626,7 @@ func (p *proxyServer) proxyArtifactBytes(w http.ResponseWriter, r *http.Request,
 		// allow-but-log default is about: nothing is being classified as bad here, we
 		// are declining to answer until we can evaluate.
 		if decision.Unavailable {
-			log.Printf("byte gate (allow-but-log) [withheld-unavailable] %s -> 403 unavailable: %s — evaluation did not complete, so the verdict kind is unknown; bytes are withheld in every BYTE-GATE mode (#60), though FW_MODE=report suppresses the refusal",
+			log.Printf("byte gate (allow-but-log) [withheld-unavailable] %s -> 403 unavailable: %s — evaluation did not complete, so the verdict kind is unknown; bytes are withheld in every BYTE-GATE mode, though FW_MODE=report suppresses the refusal",
 				pkg, decision.Reason)
 			p.writeDeferred(w, pkg, decision, serve)
 			return
@@ -2172,7 +2190,7 @@ func (p *proxyServer) relayRewritten(w http.ResponseWriter, r *http.Request, ups
 		// document. Upstream's headers are dropped before the refusal is written so
 		// its ETag or Cache-Control cannot be attached to our answer.
 		if pkg := p.firewall.PackageNameFromPath(r.URL.Path); pkg != "" {
-			filtered, d := p.npmFilterPackumentForRelay(r, body, pkg)
+			filtered, notice, d := p.npmFilterPackumentForRelay(r, body, pkg)
 			if d != nil {
 				log.Printf("%s %s %s -> allowed=false (%s)", r.Method, npmRefusalToken(*d), pkg, d.Reason)
 				overruleVerdict(r, *d) // the audit record says refused, not the allow Evaluate gave
@@ -2186,6 +2204,15 @@ func (p *proxyServer) relayRewritten(w http.ResponseWriter, r *http.Request, ups
 				return
 			}
 			body = filtered
+			if notice != "" {
+				// npm prints this header as an "npm notice" line, so an exact pin on a held
+				// release is explained right above npm's bare ETARGET (#164). no-store is
+				// what makes it print at all: npm-registry-fetch skips the notice on any
+				// response its cache layer stored, and a cache MISS is stored too. Measured
+				// with npm 11.16; e2e/npm_cooldown_test.go holds it with a real client.
+				w.Header().Set("npm-notice", notice)
+				w.Header().Set("Cache-Control", "no-store")
+			}
 		}
 	} else if p.cfg.Ecosystem == "pypi" && indexFilterNeeded {
 		filtered, err := p.applyAgeWindow(body, contentType, r)
@@ -2299,7 +2326,9 @@ func (p *proxyServer) applyAgeWindow(body []byte, contentType string, r *http.Re
 	// comment above gives about the feed: two independent passes would each have to decide
 	// the unknown case, and an entry yanked by either looks identical to the developer.
 	op := operatorPin{deny: p.firewall.deny(), ecosystem: p.cfg.Ecosystem, pkg: pkg, versions: versions}
-	return ageYankIndex(body, contentType, w, times, mw, op), nil
+	out, yanked := ageYankIndexFiles(body, contentType, w, times, mw, op)
+	logIndexYanks(r.Method, pkg, yanked, versions)
+	return out, nil
 }
 
 // malwarePin carries what the index filter needs to act on a version-pinned advisory:
@@ -2349,6 +2378,11 @@ func (m malwarePin) yankFor(filename string) string {
 		return ""
 	}
 	v, known := m.versions[filename]
+	if !known && m.allow.has(m.ecosystem, m.pkg) {
+		// D367: a bare-name allow covers every release, including one this join could not
+		// name. The file gate decides, and it consults the deny list too.
+		return ""
+	}
 	if !known {
 		// FAIL CLOSED, but only where there is something to miss. If the package
 		// carries no version-pinned advisory there is nothing this join could hide, and
@@ -2361,9 +2395,9 @@ func (m malwarePin) yankFor(filename string) string {
 		return ""
 	}
 	if e, found := m.list.pinnedFor(m.ecosystem, m.pkg, v); found {
-		// D312: an allow entry naming this release outranks the advisory, so the file is
-		// left unyanked and its bytes are served by the file gate's own check.
-		if m.allow.hasVersion(m.ecosystem, m.pkg, v) {
+		// D312/D367: an allow entry covering this release (a pin, or a bare name) outranks
+		// the advisory, so the file is left unyanked and the file gate's own check decides.
+		if m.allow.covers(m.ecosystem, m.pkg, v) {
 			return ""
 		}
 		return "known malware: " + e.ID
@@ -2446,6 +2480,7 @@ func (p *proxyServer) releaseWindow(now time.Time) ageWindow {
 	}
 	if p.cfg.MinReleaseAgeDays > 0 {
 		w.tooNewAfter = now.AddDate(0, 0, -p.cfg.MinReleaseAgeDays)
+		w.minDays = p.cfg.MinReleaseAgeDays
 		w.tooNewReason = fmt.Sprintf("release is within the %d-day cooldown and has not been held long enough to be reported", p.cfg.MinReleaseAgeDays)
 	}
 	return w
@@ -2508,9 +2543,21 @@ type ageWindow struct {
 	tooOldReason string
 	tooNewAfter  time.Time // yank entries uploaded AFTER this (cooldown, #26)
 	tooNewReason string
+	minDays      int // the cooldown in days, so a held release can say WHEN it clears (#164)
 }
 
 func (w ageWindow) active() bool { return !w.tooOldBefore.IsZero() || !w.tooNewAfter.IsZero() }
+
+// cooldownHolds reports whether a release published at t is still inside the cooldown.
+func (w ageWindow) cooldownHolds(t time.Time) bool {
+	return !w.tooNewAfter.IsZero() && t.After(w.tooNewAfter)
+}
+
+// cooldownClears is when a release published at t leaves the cooldown, in UTC: the date a
+// developer who asked for it by exact version can try again (#164).
+func (w ageWindow) cooldownClears(t time.Time) time.Time {
+	return t.UTC().AddDate(0, 0, w.minDays)
+}
 
 // reasonFor is THE release-window decision: given a release time and whether we could
 // determine it at all, why (if at all) must this release be refused? Returns "" to
@@ -2551,9 +2598,35 @@ func (w ageWindow) reasonFor(t time.Time, known bool) string {
 // invoked is indistinguishable at runtime from one that is absent.
 type perFileRefuser interface {
 	yankFor(filename string) string
+	// logToken is the outcome token the operator's log carries for this refuser's yanks,
+	// the same one npm's packument filter writes for the same cause.
+	logToken() string
 }
 
+func (malwarePin) logToken() string  { return "[known-malware]" }
+func (operatorPin) logToken() string { return "[operator-denied]" }
+
 func ageYankIndex(body []byte, contentType string, w ageWindow, times map[string]time.Time, mw malwarePin, extra ...perFileRefuser) []byte {
+	out, _ := ageYankIndexFiles(body, contentType, w, times, mw, extra...)
+	return out
+}
+
+// yankedFile is one index entry the gate yanked: the file, the reason the developer
+// reads, and the outcome token the operator's log carries for it.
+type yankedFile struct {
+	file, reason, token string
+}
+
+// ageYankIndexFiles is ageYankIndex that also reports what it yanked, so the caller can
+// log it. Without that report a PyPI refusal left no trace in the gate's log: the reason
+// reached pip inside the index, and the operator's log showed a plain allow for the same
+// request (E123b: a tree broken by the cooldown, and zero cooldown lines in the log). npm
+// logs one line per version it removes; this gives PyPI the same.
+//
+// The report is empty whenever the body is returned unmodified (an index that does not
+// parse, or fails to re-encode), so it never names a yank the client did not receive.
+func ageYankIndexFiles(body []byte, contentType string, w ageWindow, times map[string]time.Time, mw malwarePin, extra ...perFileRefuser) ([]byte, []yankedFile) {
+	var yanked []yankedFile
 	// Returns the reason to yank with, or "" to leave the entry alone. Unknown age,
 	// known-too-old and known-too-new are three different facts, and the reason string
 	// is what the developer actually reads, so they must not be conflated.
@@ -2562,24 +2635,30 @@ func ageYankIndex(body []byte, contentType string, w ageWindow, times map[string
 		// known-malware advisory is a fact about the artifact, not a policy dial, so it
 		// must apply even when no age bound is configured at all.
 		if r := mw.yankFor(filename); r != "" {
+			yanked = append(yanked, yankedFile{filename, r, mw.logToken()})
 			return r
 		}
 		for _, x := range extra {
 			if r := x.yankFor(filename); r != "" {
+				yanked = append(yanked, yankedFile{filename, r, x.logToken()})
 				return r
 			}
 		}
 		t, ok := times[filename]
-		return w.reasonFor(t, ok)
+		r := w.reasonFor(t, ok)
+		if r != "" {
+			yanked = append(yanked, yankedFile{filename, r, "[release-window]"})
+		}
+		return r
 	}
 	if strings.Contains(contentType, "json") {
 		var doc map[string]any
 		if err := json.Unmarshal(body, &doc); err != nil {
-			return body
+			return body, nil
 		}
 		files, ok := doc["files"].([]any)
 		if !ok {
-			return body
+			return body, nil
 		}
 		for _, f := range files {
 			fm, ok := f.(map[string]any)
@@ -2595,13 +2674,13 @@ func ageYankIndex(body []byte, contentType string, w ageWindow, times map[string
 			}
 		}
 		if out, err := json.Marshal(doc); err == nil {
-			return out
+			return out, yanked
 		}
-		return body
+		return body, nil
 	}
 	// HTML PEP 503: inject data-yanked only into anchors whose inner text (the
 	// filename) is older than the cutoff and not already yanked by upstream.
-	return pep503Anchor.ReplaceAllFunc(body, func(m []byte) []byte {
+	out := pep503Anchor.ReplaceAllFunc(body, func(m []byte) []byte {
 		sub := pep503Anchor.FindSubmatch(m)
 		if sub == nil || bytes.Contains(sub[1], []byte("data-yanked")) {
 			return m
@@ -2613,4 +2692,39 @@ func ageYankIndex(body []byte, contentType string, w ageWindow, times map[string
 		inject := `data-yanked="` + html.EscapeString(yr) + `" `
 		return append([]byte("<a "+inject), m[len("<a "):]...)
 	})
+	return out, yanked
+}
+
+// logIndexYanks writes one line per (outcome, version, reason) the index filter yanked,
+// the PyPI counterpart of npm's "version X removed from the packument" line. Grouped by
+// version because one release is many files (a wheel per platform), and an operator asks
+// which RELEASE was held, not which wheel. Sorted, so the log does not depend on map order.
+func logIndexYanks(method, pkg string, yanked []yankedFile, versions map[string]string) {
+	type key struct{ token, version, reason string }
+	files := map[key]int{}
+	for _, y := range yanked {
+		v, ok := versions[y.file]
+		if !ok {
+			v = "of file " + y.file // the join to a version failed; name the file instead
+		}
+		files[key{y.token, v, y.reason}]++
+	}
+	keys := make([]key, 0, len(files))
+	for k := range files {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a.version != b.version {
+			return a.version < b.version
+		}
+		if a.token != b.token {
+			return a.token < b.token
+		}
+		return a.reason < b.reason
+	})
+	for _, k := range keys {
+		log.Printf("%s %s %s -> version %s yanked in the index (%s); %d file(s)",
+			method, k.token, pkg, k.version, k.reason, files[k])
+	}
 }

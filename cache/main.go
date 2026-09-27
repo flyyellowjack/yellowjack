@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"yellowjack/fipsmode"
 )
 
 // Cache bounds (issue #15). Defaults are deliberately modest: the cache is an
@@ -41,6 +43,7 @@ func main() {
 	}
 
 	log.Printf("Yellow Jack cache starting on %s", addr)
+	log.Printf("  %s", fipsmode.Line())
 	log.Printf("  upstream (firewall): %s", upstream)
 	log.Printf("  ttl: %s   max bytes: %d", ttl, maxBytes)
 	if !c.store.enabled() {

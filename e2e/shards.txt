@@ -79,6 +79,8 @@
 1 TestStartupNoiseDetector 0.0
 1 TestDeclaredRepositoryBehindATLSTerminator 172.0
 1 TestAMovedTagIsRefusedOnTheFirstPullByARealClient 25.1
+1 TestCooldownAndDecidedInstallsNpm 46.3
+1 TestCooldownAndDecidedInstallsPypi 51.3
 
 # ── shard 2 ──
 2 TestAdversarialForgedApprovalCannotOpenTheGate 49.5
@@ -137,3 +139,5 @@
 3 TestReadOnlyFlagIsActuallyApplied 1.4
 3 TestMavenStrictChecksumsSurviveTheGate 220.0
 3 TestInterceptionWithStepCA 162.0
+2 TestTheAuditRecordNamesTheReleaseARealClientFetched 60.0
+2 TestNpmBareNameAllowInstallsTheReleaseAnAdvisoryNames 40.0

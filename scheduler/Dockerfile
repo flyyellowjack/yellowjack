@@ -19,7 +19,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 # Only the scheduler package — it's standalone (imports no firewall code).
 COPY scheduler/ ./scheduler/
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /scheduler ./scheduler
+# The one-line FIPS banner every service prints (D374); shared, so the six stay identical.
+COPY fipsmode/ ./fipsmode/
+# FIPS 140-3 (D374): build against the certified Go Cryptographic Module. Setting it also
+# makes the binary start in FIPS mode (GODEBUG fips140=on). The startup banner says which.
+# Build with --build-arg GOFIPS140=off only to compare; the published images keep it on.
+ARG GOFIPS140=v1.0.0
+RUN GOFIPS140=$GOFIPS140 CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /scheduler ./scheduler
 
 # ---- Stage 2: source the docker CLI binary ----------------------------------
 # The official docker image ships a static `docker` client at /usr/local/bin/docker.

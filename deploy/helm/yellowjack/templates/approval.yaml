@@ -72,10 +72,26 @@ spec:
                   name: {{ $name }}-database
                   key: APPROVAL_DATABASE_URL
             {{- end }}
+            # The first database connection is retried for this long before approval gives
+            # up (approval/pgstore.go). 60s is the binary's default, sized for a host
+            # install; on a fresh node the bundled postgres can still be PULLING its image
+            # then. Paired with the startupProbe below, or the window never gets to run.
+            - name: APPROVAL_DB_CONNECT_TIMEOUT
+              value: "300s"
             {{- range $k, $v := .Values.approval.env }}
             - name: {{ $k }}
               value: {{ $v | toString | quote }}
             {{- end }}
+          # Approval opens its listener only once the database answers, so without this the
+          # liveness probe below (3 + 3x10 s) killed it long before its connect window could
+          # succeed: the first real-cluster install measured 6 restarts (#163). A startupProbe
+          # suspends liveness until the service is up; 66 x 5 s covers the 300 s window.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 66
           livenessProbe:
             httpGet:
               path: /healthz

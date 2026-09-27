@@ -302,5 +302,30 @@ else
   bad "the yellowjack/* exclusion is not applied to chart values"
 fi
 
+# -- 20. a --platform flag is read through, in both directions --------------------------
+# The published images cross-compile: `FROM --platform=$BUILDPLATFORM golang:...@sha256:...`.
+# The parser once took the first word after FROM as the image, so it would have read that
+# line as an image called "--platform=$BUILDPLATFORM" -- either a false violation, or, worse,
+# a way to hide an unpinned base behind a flag. Both halves are asserted.
+d=$(scratch_repo platformflag)
+printf 'FROM --platform=$BUILDPLATFORM golang:1.26%s AS build\nFROM build\n' "$DIGEST" > "$d/svc9/Dockerfile"
+( cd "$d" && git add -A >/dev/null 2>&1 )
+rc=$(run_offline "$d")
+got=$(from_refs_in "$d/svc9/Dockerfile" | tr '\n' ' ')
+if [ "$rc" = "0" ] && [ "$got" = "golang:1.26$DIGEST " ]; then
+  ok "a pinned FROM behind --platform passes and is read as the image it names"
+else
+  bad "a pinned --platform FROM: rc=$rc, parsed as '$got': $(cat "$TMP/out")"
+fi
+d=$(scratch_repo platformunpinned)
+printf 'FROM --platform=$BUILDPLATFORM golang:1.26 AS build\n' > "$d/svc10/Dockerfile"
+( cd "$d" && git add -A >/dev/null 2>&1 )
+rc=$(run_offline "$d")
+if [ "$rc" != "0" ] && grep -q 'golang:1.26 is not pinned by digest' "$TMP/out"; then
+  ok "an UNPINNED base behind --platform is still a violation"
+else
+  bad "an unpinned base hid behind --platform: rc=$rc: $(cat "$TMP/out")"
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

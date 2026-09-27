@@ -311,7 +311,10 @@ func (v *overviewView) fillFleet(rows []instanceHealth, s *server) {
 	single := len(names) == 1
 
 	var differs, on, off []string
-	count := ""
+	// Each ecosystem enforces its own rows of the list, so the tile is their total, and
+	// when more than one gate enforces one the line under it says whose is whose.
+	var total int64
+	counted := map[string]int64{}
 	for _, k := range names {
 		e := ecos[k]
 		if len(e.feeds) > 1 {
@@ -321,8 +324,9 @@ func (v *overviewView) fillFleet(rows []instanceHealth, s *server) {
 		for f := range e.feeds {
 			switch m := feedCount.FindStringSubmatch(f); {
 			case m != nil:
-				n, _ := strconv.Atoi(m[1])
-				count = humanCount(int64(n))
+				n, _ := strconv.ParseInt(m[1], 10, 64)
+				total += n
+				counted[ecosystemLabel(k)] = n
 				on = append(on, ecosystemLabel(k))
 			case f == "" || f == "off":
 				off = append(off, ecosystemLabel(k))
@@ -340,13 +344,23 @@ func (v *overviewView) fillFleet(rows []instanceHealth, s *server) {
 	case len(on) == 0:
 		v.FeedValue, v.FeedSub, v.FeedLevel = "Off", "No known-malware list is loaded.", "warn"
 	default:
-		v.FeedLevel, v.FeedValue = "ok", count
-		if count == "" {
-			v.FeedValue = "Loaded"
+		v.FeedLevel, v.FeedValue = "ok", "Loaded"
+		if len(counted) > 0 {
+			v.FeedValue = humanCount(total)
 		}
 		v.FeedSub = "Advisories, checked on the gate itself."
 		if !single {
-			v.FeedSub = "Enforced on " + strings.Join(on, ", ")
+			shown := on
+			if len(counted) > 1 {
+				shown = make([]string, len(on))
+				for i, e := range on {
+					shown[i] = e
+					if n, ok := counted[e]; ok {
+						shown[i] = e + " " + humanCount(n)
+					}
+				}
+			}
+			v.FeedSub = "Enforced on " + strings.Join(shown, ", ")
 			if len(off) > 0 {
 				v.FeedSub += "; off on " + strings.Join(off, ", ")
 			}

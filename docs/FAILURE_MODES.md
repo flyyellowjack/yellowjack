@@ -37,7 +37,7 @@ show the developer any of that text is measured separately, per client, in
 | What fails | What the developer gets | What the pipeline does | Knob |
 |---|---|---|---|
 | [The gate itself is down](#1-the-gate-itself-is-down) | a connection error from their own package manager; nothing of ours answers | fails at the first pull, for as long as no replica answers | run replicas; `/healthz` is liveness |
-| [The gate is being upgraded or rolled back](#2-the-gate-is-being-upgraded-or-rolled-back) | nothing; measured zero failed requests through a rollover | keeps pulling | none needed |
+| [The gate is being upgraded or rolled back](#2-the-gate-is-being-upgraded-or-rolled-back) | nothing; measured zero failed requests through a rollover, and through a Kubernetes node drain | keeps pulling | none needed |
 | [The gate is slow](#3-the-gate-is-slow) | nothing on a warm path; one cold hit per package | first sight of a package costs 1&ndash;2 s, once, however many clients ask | `FW_SCORE_CACHE_TTL` |
 | [The upstream registry is unreachable or slow](#4-the-upstream-registry-is-unreachable-or-slow) | `403`, kind `unavailable`: *"this is not a verdict about the package"* | every pull that needs the registry fails for the duration; nothing retries | registry-in-front topology keeps already-held packages installable |
 | [The upstream stalls or truncates mid-download](#5-the-upstream-stalls-or-truncates-mid-download) | a short transfer is refused as short, never delivered as complete | the download fails; a stall waits as long as the client does | none |
@@ -82,6 +82,20 @@ state in the gate to migrate. On Kubernetes an operator-list edit rolls nothing,
 the pod template hashes only the environment.
 
 Run it yourself: `sh scripts/dev.sh ha`.
+
+**On Kubernetes, a stopped gate drains before it goes** (`shutdown.go`). A pod is withdrawn
+from the Service at the same moment it is sent SIGTERM, and the withdrawal reaches every
+node a little later. So on SIGTERM the gate answers `/readyz` with 503 and keeps serving
+for 5 s, then stops accepting and lets in-flight requests finish (up to 20 s, inside the
+default 30 s termination grace). Before this, the gate had no signal handling at all.
+
+Measured by `e2e/helm_install.sh` on a four-node kind cluster, installing the chart's
+defaults. It runs nightly (#163):
+- draining the node that holds one of the two gate replicas, while a client pulls in a loop,
+  drops **0 of 80** requests with the chart's disruption budget. It dropped 1 of 44 before the
+  drain on SIGTERM existed;
+- the control (budget off, both replicas on the drained node) drops requests, so the leg can
+  go red.
 
 ## 3. The gate is slow
 

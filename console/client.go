@@ -55,6 +55,7 @@ type event struct {
 	// (D312). Rendered on the audit row, because an override the organisation cannot see
 	// is the half of the ruling that would have been dropped.
 	Override string `json:"override,omitempty"`
+	Version  string `json:"version,omitempty"` // the release the verdict concerned (D363); "" = package-level
 	Rule     string `json:"rule,omitempty"`
 	Source   string `json:"source,omitempty"`
 	// What the gate actually DID with the verdict, and why the two can differ (#114):
@@ -102,6 +103,8 @@ type instanceHealth struct {
 	FlowDropped  int64      `json:"flow_dropped"`
 	Policy       *policyDoc `json:"policy,omitempty"`
 	PolicyDigest string     `json:"policy_digest,omitempty"`
+	// ReplacedBy is set by the approval service on a silent replica a redeploy replaced.
+	ReplacedBy string `json:"replaced_by,omitempty"`
 }
 
 // policyDoc is the policy a replica reports. It mirrors the firewall's PolicyView.
@@ -460,7 +463,17 @@ func (c *approvalHTTPClient) ListInstanceHealth() ([]instanceHealth, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
 		return nil, fmt.Errorf("decoding approval response: %w", err)
 	}
-	return rows, nil
+	// The one filter, and it is not a staleness filter: a replica the approval service says
+	// was REPLACED by a redeploy is no longer part of the fleet, so counting it would report a
+	// healthy deployment as "1 of 3 not reporting" for ever. A silent replica nothing
+	// replaced is still returned and still shown, which is the point of the comment above.
+	live := rows[:0]
+	for _, h := range rows {
+		if h.ReplacedBy == "" {
+			live = append(live, h)
+		}
+	}
+	return live, nil
 }
 
 func (c *approvalHTTPClient) Get(pkg string) (decision, bool, error) {

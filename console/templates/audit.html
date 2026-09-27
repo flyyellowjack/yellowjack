@@ -6,6 +6,10 @@
   {{ template "head" }}
   <style>
     td.muted.num { white-space: nowrap; }
+    /* Below 1400px the nine columns cannot all fit, and Reason -- the column a reviewer reads --
+       was the one squeezed off the edge. Ecosystem (also a filter) and Threshold (Reason states it)
+       are the two it repeats, so they go first. */
+    @media (max-width: 1400px) { th.opt, td.opt { display: none; } }
     td.reason { min-width: 20rem; }
     .exportnote { font-size: .78rem; margin: -.8rem 0 0; }
     form.fp { display: flex; flex-direction: column; gap: .3rem; }
@@ -43,22 +47,23 @@
   <p class="exportnote muted">Export is a provisional decision-log record (the authoritative log of what was pulled and why — evidence for a due-diligence obligation, not a compliance claim). It reflects the filter above.</p>
 
   {{ if .Events }}
+  <div class="tablewrap">
   <table>
     <thead>
       <tr>
-        <th>When</th><th>Package</th><th>Ecosystem</th><th>Verdict</th>{{ if not $.ScoringOff }}<th>Score</th><th>Threshold</th>{{ end }}<th>Policy</th><th>Source</th><th>Reason</th>{{ if $.CanReport }}<th></th>{{ end }}
+        <th>When</th><th>Package</th><th class="opt">Ecosystem</th><th>Verdict</th>{{ if not $.ScoringOff }}<th>Score</th><th class="opt">Threshold</th>{{ end }}<th>Policy</th><th>Source</th><th>Reason</th>{{ if $.CanReport }}<th></th>{{ end }}
       </tr>
     </thead>
     <tbody>
       {{ range .Events }}
       <tr>
         <td class="muted num">{{ .At.UTC.Format "2006-01-02 15:04:05 UTC" }}</td>
-        <td class="pkg">{{ .Package }}</td>
-        <td>{{ if .Ecosystem }}{{ .Ecosystem }}{{ else }}<span class="muted">—</span>{{ end }}</td>
-        <td><span class="badge {{ .Action }}">{{ .Action }}</span>{{ if .Served }} <span class="muted" title="report mode: the verdict was block, but the gate relayed the package (#114)">served — report mode</span>{{ end }}</td>
+        <td class="pkg">{{ .Package }}{{ if .Version }} <span class="muted" title="the release this verdict concerned">{{ .Version }}</span>{{ end }}</td>
+        <td class="opt">{{ if .Ecosystem }}{{ .Ecosystem }}{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td><span class="badge {{ .Action }}">{{ .Action }}</span>{{ if .Served }} <span class="muted" title="report mode: the verdict was block, but the gate relayed the package">served — report mode</span>{{ end }}</td>
         {{ if not $.ScoringOff }}<td class="num">{{ .Score }}{{ if .Coverage }} <span class="muted" title="partial score: computed over {{ .Coverage }}">partial</span>{{ end }}</td>
-        <td class="num muted">{{ .Threshold }}</td>{{ end }}
-        <td>{{ if .PolicyDigest }}<span class="pkg" title="the policy in force when this verdict was made">{{ .PolicyDigest }}</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td class="num muted opt">{{ .Threshold }}</td>{{ end }}
+        <td>{{ if .PolicyDigest }}<span class="pkg digest" title="policy {{ .PolicyDigest }} was in force when this verdict was made">{{ .PolicyDigest }}</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
         <td>{{ if .SourceIP }}<span class="pkg">{{ .SourceIP }}</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
         <td class="reason">{{ if .Reason }}{{ .Reason }}{{ else }}<span class="muted">—</span>{{ end }}</td>
         {{ if $.CanReport }}<td>{{ if eq .Action "block" }}
@@ -78,6 +83,7 @@
       {{ end }}
     </tbody>
   </table>
+  </div>
   {{ else if .Filter.Active }}
   <p class="empty">No events match this filter. <a href="/audit">Clear it</a> to see the full log.</p>
   {{ else }}

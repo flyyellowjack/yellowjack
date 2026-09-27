@@ -7,15 +7,18 @@ import (
 	"testing"
 )
 
-// D312, applied: *"if the administrator allows it, it is allowed."*
+// D312, applied: *"if the administrator allows it, it is allowed."* D367 widened "it":
+// a BARE NAME on the allow list covers every release (*"the admin is always right, even if
+// they're wrong"*), where D328 had read it narrowly.
 //
-// An allow entry that NAMES A RELEASE outranks a known-malware advisory for that release.
-// Three things it must not do — each of them the harm D312 itself names — have a test
-// here beside the override, because a precedence rule is only as good as its edges:
+// An allow entry outranks a known-malware advisory for every release it covers. The edges
+// that remain each have a test here beside the override, because a precedence rule is only
+// as good as its edges:
 //
-//	1. a NAME-scoped allow must not override an advisory,
-//	2. an override must not apply when the request's version is unknown,
-//	3. the operator's own deny list still wins.
+//	1. a PINNED entry does not reach a request whose version is unknown,
+//	2. the operator's own deny list still wins, including a version-scoped deny when the
+//	   version is unknown (fail closed),
+//	3. an allow for a DIFFERENT package overrides nothing.
 //
 // The override must also be LOUD (D312's second condition): the decision carries it, the
 // log says it, and the audit record exports it. An override nobody can see is
@@ -88,23 +91,31 @@ func TestAnAllowNamingTheReleaseOutranksTheAdvisory(t *testing.T) {
 	}
 }
 
-func TestANameScopedAllowDoesNotOverrideAnAdvisory(t *testing.T) {
-	// The harm D312 names: an allow granted before the hijack, covering the release
-	// nobody looked at. A reading, not the ruling's words — left open as a question.
+// REVERSED IN PLACE by D367. This test used to assert that a NAME-scoped allow did not
+// override (D328's narrow reading, which D367 rejected on purpose): "if the admin
+// whitelists all future versions of a package, that's dumb, but they did it, their
+// problem, not ours". A bare name now covers every release the advisory names, loudly.
+func TestANameScopedAllowOverridesAnAdvisory(t *testing.T) {
 	buf := captureStdLog(t)
 	f := overrideFirewall(t, ovFeed(t), ovImage, "")
 
-	d := f.Evaluate(ovImage + "@" + ovBad)
-	if d.Allowed {
-		t.Fatalf("a NAME-scoped allow overrode a version-pinned advisory: %s", d.Reason)
+	for _, v := range []string{ovBad, ovOther} {
+		d := f.Evaluate(ovImage + "@" + v)
+		if !d.Allowed {
+			t.Errorf("a bare-name allow did not override the advisory for %s: %s", v, d.Reason)
+		}
+		if !strings.Contains(d.Override, "MAL-2026-OV") {
+			t.Errorf("the override for %s does not name the advisory: %q", v, d.Override)
+		}
 	}
-	if d.Deny != denyKnownMalware {
-		t.Errorf("Deny = %q, want %q", d.Deny, denyKnownMalware)
+	if got := buf.String(); !strings.Contains(got, "[administrator-override]") {
+		t.Errorf("the override was not logged:\n%s", got)
 	}
-	// And the refusal must tell them how to say what they mean, or they will edit the
-	// wrong file: the log names the pin as the way to override.
-	if got := buf.String(); !strings.Contains(got, "Pin the release") && !strings.Contains(got, "pin the release") {
-		t.Errorf("nothing told the operator that pinning the release is how to override:\n%s", got)
+	// DISCRIMINATOR: an allow for a DIFFERENT image overrides nothing, so the test above
+	// cannot pass on a gate that stopped enforcing the feed.
+	g := overrideFirewall(t, ovFeed(t), "library/unrelated", "")
+	if d := g.Evaluate(ovImage + "@" + ovBad); d.Allowed {
+		t.Errorf("an allow entry for another image overrode this advisory: %s", d.Reason)
 	}
 }
 
@@ -260,5 +271,76 @@ func TestTheConsoleAndTheGateAgreeOnALLOWGrammar(t *testing.T) {
 		if !c.ok && err == nil {
 			t.Errorf("gate ACCEPTED a malformed allow entry (%s %q)", c.eco, c.entry)
 		}
+	}
+}
+
+// The edges D367 moved. A bare name covers every release, so it reaches a request whose
+// version could not be determined; a pinned line still does not (TestAnOverrideNeedsAKnown
+// Version); and the operator's own version-scoped deny fails the unknown case closed,
+// because it might name exactly this release.
+func TestABareNameCoversAReleaseWhoseVersionIsUnknown(t *testing.T) {
+	feed := writeFeed(t, `{"id":"MAL-2026-UNK","ecosystem":"npm","name":"pkg","versions":["2.0.0"]}`)
+	build := func(allow, deny string) *Firewall {
+		t.Helper()
+		cfg := Config{Ecosystem: "npm", UpstreamRegistry: "http://127.0.0.1:1", ScorecardMode: "stub",
+			ScoreThreshold: 5.0, MalwareListPath: feed, AllowListPath: writeList(t, "allow.txt", allow)}
+		if deny != "" {
+			cfg.DenyListPath = writeList(t, "deny.txt", deny)
+		}
+		f, err := NewFirewall(cfg)
+		if err != nil {
+			t.Fatalf("NewFirewall: %v", err)
+		}
+		return f
+	}
+	d, blocked := build("pkg", "").pinnedMalwareVerdict("pkg", "", false)
+	if !blocked || !d.Allowed || d.Override == "" {
+		t.Errorf("a bare-name allow did not cover an unknown-version request: blocked=%v %+v", blocked, d)
+	}
+	if d, _ := build("pkg", "pkg@9.9.9").pinnedMalwareVerdict("pkg", "", false); d.Allowed {
+		t.Errorf("an unknown-version request was served although the operator's deny list names a "+
+			"release of this package that it could be: %+v", d)
+	}
+	if d, _ := build("other", "").pinnedMalwareVerdict("pkg", "", false); d.Allowed {
+		t.Errorf("control: an allow for another package covered this one: %+v", d)
+	}
+}
+
+// The metadata filters ask the same question the verdict does: a bare name keeps every
+// advisory-named release in the npm packument and unyanked in the PyPI index.
+func TestTheMetadataFiltersHonourABareNameAllow(t *testing.T) {
+	list, err := loadMalwareList(writeFeed(t,
+		`{"id":"MAL-NPM","ecosystem":"npm","name":"pkg","versions":["2.0.0"]}`,
+		`{"id":"MAL-PY","ecosystem":"pypi","name":"pkg","versions":["2.0"]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare := func(eco string) *operatorList {
+		l, err := parseOperatorList("allow", eco, strings.NewReader("pkg\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	empty := func(eco string) *operatorList {
+		l, _ := parseOperatorList("allow", eco, strings.NewReader(""))
+		return l
+	}
+	if reason, _ := npmPinnedRefuser(list, bare("npm"), "pkg")(npmVersionFacts{Version: "2.0.0"}); reason != "" {
+		t.Errorf("the npm packument filter removed a release a bare-name allow covers: %q", reason)
+	}
+	if reason, _ := npmPinnedRefuser(list, empty("npm"), "pkg")(npmVersionFacts{Version: "2.0.0"}); reason == "" {
+		t.Error("control: with no allow entry the npm filter kept the advisory's release")
+	}
+	pin := malwarePin{list: list, allow: bare("pypi"), ecosystem: "pypi", pkg: "pkg",
+		versions: map[string]string{"pkg-2.0.tar.gz": "2.0"}}
+	for _, file := range []string{"pkg-2.0.tar.gz", "pkg-unknown.tar.gz"} {
+		if r := pin.yankFor(file); r != "" {
+			t.Errorf("the PyPI index yanked %s although a bare-name allow covers every release: %q", file, r)
+		}
+	}
+	pin.allow = empty("pypi")
+	if pin.yankFor("pkg-2.0.tar.gz") == "" || pin.yankFor("pkg-unknown.tar.gz") == "" {
+		t.Error("control: with no allow entry the PyPI index left the advisory's file (or an unknown one) unyanked")
 	}
 }

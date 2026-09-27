@@ -1,0 +1,75 @@
+# A tag vMAJOR.MINOR.PATCH publishes one release: the firewall, approval and console images
+# (FIPS 140-3 builds, linux/amd64 and linux/arm64) to ghcr.io, the Helm chart pinned to
+# those image digests, and a GitHub release carrying the CHANGELOG section.
+#
+# All the work is in scripts/release.sh so a release can be rehearsed against a local
+# registry before anything is tagged. The only credential is this repository's own
+# GITHUB_TOKEN, scoped by the permissions below. Actions are pinned by commit SHA, like ci.yml.
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub release
+      packages: write   # push images and the chart to ghcr.io
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      SOURCE_URL: https://github.com/${{ github.repository }}
+      ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: the tag agrees with CHANGELOG.md and the chart
+        run: sh scripts/release.sh check "$GITHUB_REF_NAME"
+      - name: unit tests on the tagged tree
+        run: go test ./... -count=1
+      # The token reaches only the steps that publish, through the environment: never the
+      # unit tests, and never interpolated into a script body.
+      - name: log in to ghcr.io
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: build and push the images
+        run: |
+          docker buildx create --use --name yj-release >/dev/null
+          sh scripts/release.sh images "$GITHUB_REF_NAME"
+      - name: package and push the chart, pinned to those digests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
+          sh scripts/release.sh chart "$GITHUB_REF_NAME"
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sh scripts/release.sh notes "$GITHUB_REF_NAME" > release-out/notes.md
+          {
+            echo
+            echo "## Images"
+            echo
+            v="${GITHUB_REF_NAME#v}"
+            while IFS='=' read -r name digest; do
+              echo "- \`$REGISTRY/yellowjack-$name:$v@$digest\`"
+            done < release-out/digests.env
+            echo
+            echo "## Install"
+            echo
+            echo '```'
+            echo "helm install yellowjack oci://$REGISTRY/charts/yellowjack --version $v"
+            echo '```'
+          } >> release-out/notes.md
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-out/notes.md \
+            "release-out/chart/yellowjack-${GITHUB_REF_NAME#v}.tgz"

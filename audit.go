@@ -69,6 +69,9 @@ type auditEvent struct {
 	// omitempty so an unobserved source marshals to an absent field, matching the
 	// approval AuditEvent's own omitempty.
 	SourceIP string `json:"source_ip,omitempty"`
+	// Version is the release the verdict concerned (D363), when the request named one.
+	// Absent, not "", on a package-level verdict such as an npm packument.
+	Version string `json:"version,omitempty"`
 
 	// The two fields below are the DECISION'S INPUTS, not more description of it
 	// (#28: "the reason and the inputs that produced it"). Score and Reason say what

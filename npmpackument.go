@@ -91,6 +91,10 @@ type npmRefusal struct {
 	Version string
 	Reason  string
 	Cause   npmRefusalCause
+	// Published and HasTime are the packument's publish time for this version, so a
+	// cooldown refusal can say when it clears (#164). Zero for a version document.
+	Published time.Time
+	HasTime   bool
 }
 
 // npmFilterResult says what npmFilterMetadata did to a document.
@@ -139,7 +143,7 @@ func npmFilterMetadata(body []byte, refuse npmVersionRefuser) ([]byte, npmFilter
 	for v := range versions {
 		published, hasTime := times[v]
 		if reason, cause := refuse(npmVersionFacts{Version: v, Published: published, HasTime: hasTime, InPackument: true}); reason != "" {
-			res.Removed = append(res.Removed, npmRefusal{Version: v, Reason: reason, Cause: cause})
+			res.Removed = append(res.Removed, npmRefusal{Version: v, Reason: reason, Cause: cause, Published: published, HasTime: hasTime})
 		}
 	}
 	res.Remaining = len(versions) - len(res.Removed)
@@ -252,9 +256,10 @@ func npmRepointTag(removed string, remaining []string) string {
 func npmPinnedRefuser(list *malwareList, allow *operatorList, pkg string) npmVersionRefuser {
 	return func(f npmVersionFacts) (string, npmRefusalCause) {
 		if e, found := list.pinnedFor("npm", pkg, f.Version); found {
-			// D312: an allow entry naming THIS release outranks the advisory, so the
-			// release stays in the packument. Logged by the caller that serves it.
-			if allow.hasVersion("npm", pkg, f.Version) {
+			// D312/D367: an allow entry covering THIS release (a pin, or a bare name)
+			// outranks the advisory, so the release stays in the packument. The byte path
+			// then asks adminAllowsRelease, which also consults the deny list.
+			if allow.covers("npm", pkg, f.Version) {
 				return "", causeWindow
 			}
 			return "known malware: " + e.ID, causeMalware
@@ -294,8 +299,10 @@ func npmWindowRefuser(w ageWindow) npmVersionRefuser {
 			return "release age could not be verified (no publish time for this version)", causeWindow
 		case !w.tooOldBefore.IsZero() && f.Published.Before(w.tooOldBefore):
 			return w.tooOldReason, causeWindow
-		case !w.tooNewAfter.IsZero() && f.Published.After(w.tooNewAfter):
-			return w.tooNewReason, causeWindow
+		case w.cooldownHolds(f.Published):
+			// The clear date is in the reason itself, so the operator's log line, the 403
+			// when every version is held, and the client notice all name the same day.
+			return w.tooNewReason + "; it clears " + w.cooldownClears(f.Published).Format(npmClearsFormat), causeWindow
 		}
 		return "", causeWindow
 	}
@@ -338,7 +345,7 @@ func (p *proxyServer) warnIfUpstreamUndated(pkg string) {
 	}
 	log.Printf("WARNING: upstream %s served the packument for %q with NO publish dates (no `time` map). "+
 		"While the release window is active (FW_MIN_RELEASE_AGE_DAYS=%d, FW_MAX_RELEASE_AGE_DAYS=%d) every "+
-		"version it serves without a date is REFUSED, by design (D100). If this registry never publishes "+
+		"version it serves without a date is REFUSED, by design. If this registry never publishes "+
 		"dates, point the gate at one that does, or set FW_MIN_RELEASE_AGE_DAYS=0 to turn the cooldown off. "+
 		"Logged once.", p.cfg.UpstreamRegistry, pkg, p.cfg.MinReleaseAgeDays, p.cfg.MaxReleaseAgeDays)
 }
@@ -358,12 +365,72 @@ func npmRefusalToken(d Decision) string {
 	return "[known-malware]"
 }
 
+// npmClearsFormat is how a cooldown's clear time is written for people: to the minute,
+// and always UTC, because the developer reading it may be in any timezone.
+const npmClearsFormat = "2006-01-02 15:04 UTC"
+
+// npmNoticeMaxVersions caps how many held releases the notice names. A packument can
+// hold many at once (a package publishing nightlies), and npm prints the header on one
+// line of the developer's install output.
+const npmNoticeMaxVersions = 3
+
+// npmCooldownNotice is the line npm prints as "npm notice ..." for a packument the
+// cooldown removed releases from (#164), or "" when it removed none. Without it, an exact
+// pin on a held release (`npm install pkg@1.2.3` the day it is published) fails with npm's
+// bare "No matching version found" / ETARGET, and nothing says that this organisation's
+// cooldown held it or that it clears by itself on a known day.
+//
+// npm sends the package name only (pacote-pkg-id: registry:<name>), never the version
+// asked for, so the gate cannot tell an exact pin from a range: a range install prints
+// the notice too, and succeeds. The wording is written to be true in both cases.
+//
+// Only the cooldown speaks here. An advisory, an operator's deny entry, the age floor and
+// an undated release are refused for reasons that do not clear by waiting.
+func npmCooldownNotice(pkg string, removed []npmRefusal, w ageWindow) string {
+	var held []npmRefusal
+	for _, rm := range removed {
+		if rm.Cause == causeWindow && rm.HasTime && w.cooldownHolds(rm.Published) {
+			held = append(held, rm)
+		}
+	}
+	if len(held) == 0 {
+		return ""
+	}
+	// Newest first: the release a developer just read about is the one they will pin.
+	sort.Slice(held, func(i, j int) bool { return semverCompare(held[i].Version, held[j].Version) > 0 })
+	items := make([]string, 0, npmNoticeMaxVersions)
+	for _, rm := range held[:min(len(held), npmNoticeMaxVersions)] {
+		items = append(items, headerSafe(pkg+"@"+rm.Version)+" until "+w.cooldownClears(rm.Published).Format(npmClearsFormat))
+	}
+	more := ""
+	if n := len(held) - len(items); n > 0 {
+		more = fmt.Sprintf(" (and %d more)", n)
+	}
+	return fmt.Sprintf("package firewall: held by this organisation's %d-day release cooldown: %s%s. "+
+		"Asking for a held release by exact version fails with ETARGET until then; a range installs an older "+
+		"release. The cooldown is set by whoever operates this firewall",
+		w.minDays, strings.Join(items, ", "), more)
+}
+
+// headerSafe keeps a value from the upstream document to printable ASCII, so a name or
+// version cannot break the header line it is written into.
+func headerSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
 // npmFilterPackumentForRelay is relayRewritten's npm hook. It returns the body to
-// serve, or a Decision to refuse the request with (a version document of a refused
-// version, or a packument with nothing compliant left). The log lines it writes are
-// the operator's record of every version steered around.
-func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, pkg string) ([]byte, *Decision) {
-	out, res, err := npmFilterMetadata(body, p.npmRefuser(pkg, time.Now()))
+// serve and the cooldown notice to send with it (npmCooldownNotice), or a Decision to
+// refuse the request with (a version document of a refused version, or a packument with
+// nothing compliant left). The log lines it writes are the operator's record of every
+// version steered around.
+func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, pkg string) ([]byte, string, *Decision) {
+	now := time.Now()
+	out, res, err := npmFilterMetadata(body, p.npmRefuser(pkg, now))
 	if err == nil && res.Undated {
 		p.warnIfUpstreamUndated(pkg)
 	}
@@ -371,11 +438,11 @@ func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, p
 		// Not a document we understand — a registry-specific shape, an error page with
 		// a 200. Served as relayed: there is nothing to filter, and nothing was hidden.
 		log.Printf("%s %s -> npm metadata not filtered (%v); served as relayed", r.Method, pkg, err)
-		return body, nil
+		return body, "", nil
 	}
 	if res.Refused != nil {
 		if res.Refused.Cause == causeOperator {
-			return body, &Decision{
+			return body, "", &Decision{
 				Allowed: false,
 				Deny:    denyOperator,
 				Rule:    "deny-list:" + joinOperatorEntry("npm", pkg, res.Refused.Version),
@@ -386,7 +453,7 @@ func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, p
 			}
 		}
 		id := strings.TrimPrefix(res.Refused.Reason, "known malware: ")
-		return body, &Decision{
+		return body, "", &Decision{
 			Allowed: false,
 			Deny:    denyKnownMalware,
 			Rule:    id,
@@ -416,7 +483,7 @@ func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, p
 		// names the ORGANISATION as the decider and points at a colleague, not at us
 		// (D137) — the same wording the name-scoped deny uses in Evaluate.
 		if operator == len(res.Removed) {
-			return body, &Decision{
+			return body, "", &Decision{
 				Allowed: false,
 				Deny:    denyOperator,
 				Rule:    "deny-list:" + pkg,
@@ -430,7 +497,7 @@ func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, p
 		// names every policy involved, so a mixed refusal is attributable to both.
 		switch {
 		case malware == len(res.Removed):
-			return body, &Decision{
+			return body, "", &Decision{
 				Allowed: false,
 				Deny:    denyKnownMalware,
 				Rule:    firstID,
@@ -438,7 +505,7 @@ func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, p
 				Reason:  fmt.Sprintf("every version of %q is listed as known malware: %s", pkg, strings.Join(items, ", ")),
 			}
 		case malware > 0:
-			return body, &Decision{
+			return body, "", &Decision{
 				Allowed: false,
 				Deny:    denyKnownMalware,
 				Rule:    firstID,
@@ -446,7 +513,7 @@ func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, p
 				Reason:  fmt.Sprintf("every version of %q is refused, %d of %d as known malware: %s", pkg, malware, len(res.Removed), strings.Join(items, ", ")),
 			}
 		}
-		return body, &Decision{
+		return body, "", &Decision{
 			Allowed: false,
 			Deny:    denyReleaseWindow,
 			Rule:    "release-window",
@@ -472,5 +539,5 @@ func (p *proxyServer) npmFilterPackumentForRelay(r *http.Request, body []byte, p
 			log.Printf("%s %s -> dist-tag %q repointed from refused version %s to %s", r.Method, pkg, tag, ft[0], ft[1])
 		}
 	}
-	return out, nil
+	return out, npmCooldownNotice(pkg, res.Removed, p.releaseWindow(now)), nil
 }

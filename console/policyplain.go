@@ -76,7 +76,7 @@ func buildPlainPolicy(p *policyDoc) plainPolicy {
 	if m := feedCount.FindStringSubmatch(v["known_malware_feed"]); m != nil {
 		n, _ := strconv.Atoi(m[1])
 		feed.Detail = humanCount(int64(n)) + " advisories, checked on the gate before the registry is contacted. " +
-			"A release pinned on your allow list outranks the advisory for that release only."
+			"An entry on your allow list outranks the advisory: a pinned release for that release, a bare name for every release."
 	} else if v["known_malware_feed"] == "" || v["known_malware_feed"] == "off" {
 		feed.Detail, feed.Off = "No known-malware list is loaded on this deployment.", true
 	} else {

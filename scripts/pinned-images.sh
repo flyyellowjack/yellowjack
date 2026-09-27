@@ -83,10 +83,18 @@ resolve_from_ref() {
   if [ -n "$d" ]; then printf '%s\n' "$d"; else printf '%s\n' "$2"; fi
 }
 
+# from_lines FILE -- the file with any `--flag=value` removed from its FROM lines, so
+# `FROM --platform=$BUILDPLATFORM golang:1.26@sha256:... AS build` (the cross-compiling
+# build stage, scripts/release.sh) is read as the image it names, not as an image called
+# "--platform=$BUILDPLATFORM".
+from_lines() {
+  sed 's/^\(FROM\)\([[:space:]]\{1,\}--[^[:space:]]\{1,\}\)\{1,\}/\1/' "$1"
+}
+
 from_refs_in() {
   file="$1"
-  stages=$(sed -n 's/^FROM[[:space:]]\{1,\}[^[:space:]]\{1,\}[[:space:]]\{1,\}[Aa][Ss][[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' "$file")
-  sed -n 's/^FROM[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' "$file" | while IFS= read -r ref; do
+  stages=$(from_lines "$file" | sed -n 's/^FROM[[:space:]]\{1,\}[^[:space:]]\{1,\}[[:space:]]\{1,\}[Aa][Ss][[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p')
+  from_lines "$file" | sed -n 's/^FROM[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' | while IFS= read -r ref; do
     ref=$(resolve_from_ref "$file" "$ref")
     [ "$ref" = "scratch" ] && continue
     case "$ref" in yellowjack-*) continue ;; esac

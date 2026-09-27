@@ -69,6 +69,12 @@ type InstanceHealth struct {
 	// at face value: this service never recomputes it, because it deliberately does not
 	// model the policy well enough to do so.
 	PolicyDigest string `json:"policy_digest,omitempty"`
+
+	// ReplacedBy names the replica that took over from this one, when this one has gone
+	// silent because it was REPLACED (a redeploy) rather than because it died. Computed on
+	// read by markReplaced, never stored and never taken from a heartbeat. Empty on every
+	// live replica and on every silent one nothing accounts for.
+	ReplacedBy string `json:"replaced_by,omitempty"`
 }
 
 // UpsertInstanceHealth records one replica's heartbeat, REPLACING any previous reading

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -36,9 +37,11 @@ import (
 //     and says so; it never makes a replica unready, because every replica shares one
 //     endpoint and an outage there would take the whole fleet out of rotation at once.
 //   - LOUD ONCE. A failure is logged when the outcome CHANGES, not every interval.
-//   - NO BORROWED CREDENTIAL. The client carries the gate's user agent and nothing
-//     else. The upstream registry credential is host-scoped to the registry, and the
-//     fetcher is built without that wrapper at all, so it cannot reach the feed host.
+//   - NO BORROWED CREDENTIAL. The client carries the gate's user agent and, since D366,
+//     the feed's OWN access key when FW_MALWARE_FEED_AUTH_FILE is set -- nothing else. The
+//     upstream registry credential is host-scoped to the registry, and the fetcher is
+//     built without that wrapper at all, so it cannot reach the feed host; the feed key,
+//     in turn, is given to no other client (feedauth_test.go pins both directions).
 //
 // The endpoint is operator configuration with NO default (docs/EGRESS.md: every
 // address the gate dials comes from config). Whether the shipped default should name
@@ -57,7 +60,10 @@ type feedFetcher struct {
 	url, path string
 	key       ed25519.PublicKey
 	client    *http.Client
-	logf      func(string, ...any)
+	// cred, when set, is the feed's ACCESS key (D366), sent as the Authorization header on
+	// the feed pull and nowhere else. Nil = no key, which is what shipped before D366.
+	cred credentialSource
+	logf func(string, ...any)
 	// inForce reports the feed currently enforcing, so a served snapshot can be
 	// compared against it. The reloading source's current().
 	inForce func() *malwareList
@@ -108,11 +114,27 @@ func (f *feedFetcher) fetchOnce() (string, error) {
 // 304 or 404 is not a snapshot, and treating a 404 body as one is how an empty feed
 // would be installed.
 func (f *feedFetcher) get(url string, limit int64) ([]byte, error) {
-	resp, err := f.client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	sent := false
+	if f.cred != nil {
+		if v := f.cred(); v != "" {
+			// net/http drops Authorization when a redirect leaves this host, so the key cannot
+			// follow a redirect somewhere else; feedauth_test.go pins that rather than trust it.
+			req.Header.Set("Authorization", v)
+			sent = true
+		}
+	}
+	resp, err := f.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, &feedAccessError{status: resp.StatusCode, keySent: sent}
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
@@ -160,6 +182,23 @@ func writeReplace(path string, b []byte) error {
 	return os.Rename(name, path)
 }
 
+// feedAccessError is the feed host refusing US, not an outage and not a tampered snapshot:
+// a missing or rejected subscription key (D366). It gets its own message because the fix is
+// a key, and "the feed host is down" would send the operator to the wrong place.
+type feedAccessError struct {
+	status  int
+	keySent bool
+}
+
+func (e *feedAccessError) Error() string {
+	if !e.keySent {
+		return fmt.Sprintf("the feed host refused the pull (HTTP %d) and NO access key was sent: this feed "+
+			"needs a subscription key in FW_MALWARE_FEED_AUTH_FILE", e.status)
+	}
+	return fmt.Sprintf("the feed host REFUSED the access key (HTTP %d): the key in FW_MALWARE_FEED_AUTH_FILE "+
+		"is wrong, expired or revoked", e.status)
+}
+
 // report logs an outcome when it differs from the last one logged. A refusal is a
 // SECURITY line; an ordinary failure (the endpoint is down) is not, because it is not an
 // attack and a fleet-wide outage should not look like one.
@@ -173,6 +212,13 @@ func (f *feedFetcher) report(outcome string, err error) {
 	f.lastOutcome = line
 	f.mu.Unlock()
 	if same {
+		return
+	}
+	var access *feedAccessError
+	if errors.As(err, &access) {
+		// Not a SECURITY line: nothing was tampered with; the subscription was refused.
+		f.logf("known-malware snapshot pull from %q: %v -- the feed in force is unchanged and still enforcing",
+			f.url, err)
 		return
 	}
 	if err != nil {

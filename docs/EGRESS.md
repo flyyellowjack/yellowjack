@@ -39,7 +39,7 @@ Every entry is a `Config` field. Nothing here is a default that points at us.
 | deps.dev | `FW_DEPSDEV_BASE` | `api`-mode scoring, and repo verification (D33) | Unless `stub`/`local` mode **and** `FW_VERIFY_REPO=false` |
 | Scheduler | `FW_SCANNER_URL` | `local`/async scoring only — to launch a scan | `local` mode only |
 | Approval service | `FW_APPROVAL_URL` | L2 score lookups, approval verdicts, and the capacity/health heartbeat | Optional |
-| Known-malware snapshot | `FW_MALWARE_FEED_URL` | Hourly, in the background, never on the request path; once at startup only if no snapshot exists yet (#157) | Optional, **empty by default** |
+| Known-malware snapshot | `FW_MALWARE_FEED_URL` | Hourly, in the background, never on the request path; once at startup only if no snapshot exists yet (#157). Carries the subscription key from `FW_MALWARE_FEED_AUTH_FILE` when one is set (D366), to this host only | Optional, **empty by default** |
 | DNS resolver | *(host resolver)* | To resolve any of the above that is named rather than addressed | If you use hostnames |
 
 **Not dialled, despite looking like it:**

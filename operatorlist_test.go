@@ -122,14 +122,14 @@ func TestOperatorAllowListServesWithoutScoring(t *testing.T) {
 	}
 }
 
-// TestKnownMalwareOutranksTheOperatorAllowList.
+// TestTheOperatorAllowListOutranksKnownMalware -- REVERSED IN PLACE by D367.
 //
-// The one genuinely surprising interaction in this feature, and the reason it is
-// asserted rather than commented: an operator who allow-lists a package that is
-// publicly reported as malicious must still be refused. Without this test, someone
-// "fixing" the ordering so the allow list wins would break the sharpest gate we have
-// and every other test would stay green.
-func TestKnownMalwareOutranksTheOperatorAllowList(t *testing.T) {
+// This used to assert that an operator who allow-lists a publicly reported package is
+// still refused. D367: "the admin is always right, even if they're wrong"; "if
+// the admin whitelists all future versions of a package, that's dumb, but they did it,
+// their problem, not ours". The allow wins, loudly: the decision carries the override
+// naming the advisory, and it is still decided locally with no upstream request.
+func TestTheOperatorAllowListOutranksKnownMalware(t *testing.T) {
 	up, hits := deadUpstream(t)
 	feed := writeList(t, "malware.ndjson",
 		`{"id":"MAL-2024-0002","ecosystem":"npm","name":"compromised-dep"}`)
@@ -149,16 +149,12 @@ func TestKnownMalwareOutranksTheOperatorAllowList(t *testing.T) {
 	}
 
 	d := f.Evaluate("compromised-dep")
-	if d.Allowed {
-		t.Fatalf("the operator allow list overrode a PUBLISHED MALWARE ADVISORY — the "+
-			"allow list must never be able to do that (reason %q)", d.Reason)
+	if !d.Allowed {
+		t.Fatalf("the operator's bare-name allow did not outrank the advisory (reason %q)", d.Reason)
 	}
-	if d.Deny != denyKnownMalware {
-		t.Errorf("Deny = %q, want %q: the advisory is the more informative reason and is "+
-			"the one the developer should be shown", d.Deny, denyKnownMalware)
-	}
-	if !strings.Contains(d.Reason, "MAL-2024-0002") {
-		t.Errorf("reason = %q, want it to name the advisory ID so it can be looked up", d.Reason)
+	if !strings.Contains(d.Override, "MAL-2024-0002") || !strings.Contains(d.Reason, "MAL-2024-0002") {
+		t.Errorf("the override does not name the advisory it beat, so nobody reading the record "+
+			"can look it up: Override=%q Reason=%q", d.Override, d.Reason)
 	}
 	if n := atomic.LoadInt64(hits); n != 0 {
 		t.Errorf("made %d upstream request(s) deciding a local conflict", n)

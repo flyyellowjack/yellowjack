@@ -107,15 +107,18 @@ func TestDenyListOverridingAllowListIsLogged(t *testing.T) {
 	})
 }
 
-// TestMalwareFeedOverridingAllowListIsLogged pins the conflict !179 already logs.
+// TestABareNameAllowOverridesAPackageWideAdvisoryLoudly -- REVERSED IN PLACE by D367.
 //
-// It is here because #124 rests on the claim that this one IS reported -- and that claim
-// was read out of the source, never asserted. An untested log line is a comment.
-func TestMalwareFeedOverridingAllowListIsLogged(t *testing.T) {
+// This test used to pin the opposite: the feed beat a name-scoped allow, and said so.
+// D367: "the admin is always right, even if they're wrong" -- a bare name on the
+// allow list now outranks even a package-wide advisory. What survives from the old test is
+// the half that mattered: the outcome is never silent. The override is logged per pull and
+// carried on the decision, which the audit record exports (D312's second condition).
+func TestABareNameAllowOverridesAPackageWideAdvisoryLoudly(t *testing.T) {
 	const pkg = "evil-but-vetted"
 	feed := writeFeed(t, `{"id":"MAL-2026-9999","ecosystem":"npm","name":"`+pkg+`"}`)
 
-	t.Run("feed beats the allow list, and says so", func(t *testing.T) {
+	t.Run("the administrator's bare name wins, and says so", func(t *testing.T) {
 		f := listConflictFirewall(t, Config{
 			MalwareListPath: feed,
 			AllowListPath:   writeList(t, "allow.txt", pkg),
@@ -123,16 +126,15 @@ func TestMalwareFeedOverridingAllowListIsLogged(t *testing.T) {
 		buf := captureStdLog(t)
 
 		d := f.Evaluate(pkg)
-		if d.Allowed {
-			t.Fatalf("a package in the known-malware feed was ALLOWED by the allow list "+
-				"(reason %q) — an operator cannot opt out of a published advisory", d.Reason)
+		if !d.Allowed {
+			t.Fatalf("a bare-name allow did not override the advisory (reason %q); D367 says it does", d.Reason)
 		}
-		if d.Deny != denyKnownMalware {
-			t.Errorf("Deny = %q, want %q — the feed's reason carries the advisory ID, which "+
-				"is the more useful of the two", d.Deny, denyKnownMalware)
+		if !strings.Contains(d.Override, "MAL-2026-9999") {
+			t.Errorf("the decision does not carry the override naming the advisory, so the audit "+
+				"record cannot show it: Override=%q", d.Override)
 		}
-		if got := buf.String(); !strings.Contains(got, conflictLogFeed) {
-			t.Errorf("the allow-list entry was overridden by the feed and nothing said so\ngot log:\n%s", got)
+		if got := buf.String(); !strings.Contains(got, "[administrator-override]") {
+			t.Errorf("the override was served silently\ngot log:\n%s", got)
 		}
 	})
 
@@ -143,8 +145,8 @@ func TestMalwareFeedOverridingAllowListIsLogged(t *testing.T) {
 		if d := f.Evaluate(pkg); d.Allowed {
 			t.Fatalf("known-malware package was allowed (reason %q)", d.Reason)
 		}
-		if got := buf.String(); strings.Contains(got, conflictLogFeed) {
-			t.Errorf("a package with no allow-list entry was reported as a conflict\ngot log:\n%s", got)
+		if got := buf.String(); strings.Contains(got, conflictLogFeed) || strings.Contains(got, "[administrator-override]") {
+			t.Errorf("a package with no allow-list entry was reported as a conflict or an override\ngot log:\n%s", got)
 		}
 	})
 }
@@ -168,9 +170,14 @@ func TestListConflictLogsAreDistinguishable(t *testing.T) {
 	})
 	buf := captureStdLog(t)
 
+	// Under D367 the allow entry would override the feed on its own; the operator's deny
+	// list is what stops it (their two files disagree, and the refusing one wins).
 	d := f.Evaluate(pkg)
+	if d.Allowed || d.Override != "" {
+		t.Errorf("a package on the operator's own deny list was served by override: %q", d.Override)
+	}
 	if d.Deny != denyKnownMalware {
-		t.Errorf("Deny = %q, want %q — the feed outranks both operator lists", d.Deny, denyKnownMalware)
+		t.Errorf("Deny = %q, want %q — the advisory's reason carries the MAL- id", d.Deny, denyKnownMalware)
 	}
 	got := buf.String()
 	if !strings.Contains(got, conflictLogFeed) {

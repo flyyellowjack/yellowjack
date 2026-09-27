@@ -6,9 +6,9 @@ description: >-
 type: application
 # Chart version. Bumped on every change to the templates or defaults.
 version: 0.1.0
-# The application has no tagged release yet (CHANGELOG is [Unreleased]); the string
-# says so rather than inventing a number that would look like one.
-appVersion: "0.0.0-unreleased"
+# The released application version. scripts/release.sh refuses a tag that disagrees with it
+# or with CHANGELOG.md.
+appVersion: "0.1.0"
 kubeVersion: ">=1.25.0-0"
 keywords:
   - package-firewall

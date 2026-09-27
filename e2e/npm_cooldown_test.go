@@ -19,10 +19,11 @@ import (
 func TestNpmCooldownHoldsBackAJustPublishedRelease(t *testing.T) {
 	bin := buildFirewall(t)
 	now := time.Now()
-	reg := startTwoVersionRegistry(t, map[string]time.Time{
+	published := map[string]time.Time{
 		vfClean:    now.AddDate(0, 0, -400), // settled
 		vfPoisoned: now.Add(-2 * time.Hour), // published this morning; upstream's `latest`
-	})
+	}
+	reg := startTwoVersionRegistry(t, published)
 
 	t.Run("control: with no window, npm resolves the just-published latest", func(t *testing.T) {
 		fw := startFirewall(t, bin, vfEnv(reg, false))
@@ -71,6 +72,16 @@ func TestNpmCooldownHoldsBackAJustPublishedRelease(t *testing.T) {
 		}
 		if !strings.Contains(out, "No matching version") && !strings.Contains(out, "ETARGET") {
 			t.Errorf("npm failed for an unexpected reason:\n%s", tail(out, 25))
+		}
+		// #164: npm's ETARGET alone does not say that the organisation's cooldown held the
+		// release, or when it clears. The gate says so in an npm-notice header, and this is
+		// the only check that npm actually PRINTS it (it stays silent on any response its
+		// cache layer stored, which is why the gate also sends no-store).
+		clears := published[vfPoisoned].UTC().AddDate(0, 0, 7).Format("2006-01-02 15:04 UTC")
+		want := "npm notice package firewall: held by this organisation's 7-day release cooldown: " +
+			vfPkg + "@" + vfPoisoned + " until " + clears
+		if !strings.Contains(out, want) {
+			t.Errorf("npm's output does not explain the held release; want a line containing\n  %s\n%s", want, tail(out, 25))
 		}
 	})
 }

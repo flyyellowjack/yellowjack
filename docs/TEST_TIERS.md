@@ -24,6 +24,28 @@ tier as well as across them. The emphasis shifts (tier 1 is mostly happy/edge, t
 all adversarial), but no tier is exempt: a parser's unit test should still be fed hostile
 input, and an e2e leg should still cover the boring install.
 
+## What runs where, and when
+
+The public repository's GitHub Actions run only tier 1. That is the part a reader there can
+watch, so it is worth being plain about the rest: the real-client and adversarial tiers need
+Docker-in-Docker and live upstream registries, and they run in the maintainers' CI, which is not public.
+
+| When | Where | What runs |
+|---|---|---|
+| Every pull request and every push to `main` | GitHub Actions, in the public repository (`.github/workflows/ci.yml`) | build, `go vet` (including the e2e package), unit tests, formatting, doc links |
+| Every merge request, before it can merge | the maintainers' CI | build, vet, unit tests, the race detector, Helm chart lint and render, and three scanners: `govulncheck` (known vulnerabilities in reachable code), `gitleaks` (secrets in the tree and in history) and `trivy` (dependency CVEs and Dockerfile misconfiguration) |
+| Nightly, on `main` | the maintainers' CI | all of the above, plus tiers 2 and 3: the e2e suite, which drives real `npm`, `pip`, `docker`, `mvn` and `gradle` clients and the adversarial suite against the gate running as a container; the scenario rigs (a registry in front of the gate, container hardening under a read-only root filesystem and an arbitrary non-root UID, a multi-replica rolling-update drill, the Helm chart installed with its defaults on a four-node Kubernetes cluster (kind) with a node drained under load, an unreachable upstream registry, local scanning, repository verification); and the malicious-package corpus |
+
+Two things follow from that table, stated so nobody has to infer them:
+
+- **The real-client suite does not run on every merge.** It is available on a merge request
+  as a manual job, and a manual run that fails blocks the merge. Otherwise, a regression that
+  only a real client can see is found by the next nightly run, not before the merge.
+- **You can run all of it yourself.** `sh scripts/dev.sh e2e` runs the real-client suite
+  against your own Docker (`sh scripts/dev.sh e2e npm` for one ecosystem). Each scenario rig
+  is a named task in `scripts/dev.sh` (`regfront`, `harden`, `ha`, ...), with a note on what
+  it needs, and [E2E_TESTING.md](E2E_TESTING.md) holds the traps learned writing them.
+
 ---
 
 ## Tier 1 — unit / in-process

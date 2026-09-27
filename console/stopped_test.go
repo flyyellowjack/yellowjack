@@ -156,3 +156,24 @@ func TestOverviewLinksRefusalsToTheirExplanation(t *testing.T) {
 		t.Errorf("a recently stopped row does not link to its explanation")
 	}
 }
+
+// A PyPI refusal is NOT made without contacting the registry: the gate fetches the /simple/
+// index to serve it with every release marked yanked, so pip prints the reason instead of
+// backtracking (yankDeliveredReason in the gate says the same). What never happens is a
+// package FILE download. Found rehearsing the demo for a CISO (2026-09-25): the page told an
+// auditor something the gate had not done.
+func TestStoppedViewPyPISaysTheIndexWasFetched(t *testing.T) {
+	now := time.Now().UTC()
+	s := &server{approval: stoppedFake(now), auth: newBasicAuth("admin", "secret"), lists: newFakeListStore(), listEcosystem: "npm"}
+	body := stoppedGet(t, s, "/stopped/view?id=47&package=colorama-helper", true).Body.String()
+	if strings.Contains(body, "without contacting the registry") {
+		t.Error("a PyPI refusal claims the registry was never contacted; the gate fetched the index to yank it")
+	}
+	if !strings.Contains(body, "no package file was downloaded") {
+		t.Error("the PyPI refusal does not say what DID stay out: the package files")
+	}
+	// Control: npm still says it, because there it is true.
+	if body := stoppedGet(t, s, "/stopped/view?id=50&package=axios", true).Body.String(); !strings.Contains(body, "On the gate, without contacting the registry") {
+		t.Error("the npm refusal lost its accurate 'without contacting the registry'")
+	}
+}

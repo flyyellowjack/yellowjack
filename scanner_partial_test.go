@@ -54,7 +54,7 @@ func TestAPartialScannerReportIsNotAScore(t *testing.T) {
 	// An operator has to be able to tell this from "the scanner is down". Both are
 	// errors; only one is a statement about coverage, and only one is fixed by
 	// supplying a credential.
-	for _, want := range []string{"partial", "11 of 18", "4.8", "#133"} {
+	for _, want := range []string{"partial", "11 of 18", "4.8", "treated as unscorable"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not mention %q, so the log cannot distinguish a coverage shortfall "+
 				"from an outage: %v", want, err)

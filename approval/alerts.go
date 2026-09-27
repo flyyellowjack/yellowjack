@@ -87,6 +87,11 @@ func defaultAlertParams() alertParams {
 func evaluateAlerts(now time.Time, health []InstanceHealth, window FlowSummary, p alertParams) []Alert {
 	var out []Alert
 
+	// A replica a redeploy replaced is not a dead one (replaced.go). Marked on a copy: this
+	// function stays pure and the caller's rows are untouched.
+	health = append([]InstanceHealth(nil), health...)
+	markReplaced(health, now, p.SilentAfter)
+
 	for _, h := range health {
 		// A replica that has stopped reporting. THIS is the "is the firewall alive"
 		// signal, and it is a heartbeat rather than an absence of traffic precisely
@@ -94,7 +99,7 @@ func evaluateAlerts(now time.Time, health []InstanceHealth, window FlowSummary, 
 		// (see InstanceHealth). Note it fires per instance: in a multi-replica
 		// deployment the interesting case is one dead replica while the others carry the
 		// load, which a deployment-wide check would miss entirely.
-		if silent := now.Sub(h.ReportedAt); silent > p.SilentAfter {
+		if silent := now.Sub(h.ReportedAt); silent > p.SilentAfter && h.ReplacedBy == "" {
 			out = append(out, Alert{
 				Kind:     AlertInstanceSilent,
 				Severity: SeverityCritical,

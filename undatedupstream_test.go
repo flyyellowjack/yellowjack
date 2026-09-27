@@ -36,7 +36,7 @@ func TestUndatedUpstreamIsNamedOnceWhileTheWindowIsOn(t *testing.T) {
 	if n := strings.Count(out, "NO publish dates"); n != 1 {
 		t.Fatalf("an undated upstream was named %d times across three packuments, want exactly once:\n%s", n, out)
 	}
-	for _, want := range []string{upstream.URL, "FW_MIN_RELEASE_AGE_DAYS=14", "set FW_MIN_RELEASE_AGE_DAYS=0", "D100"} {
+	for _, want := range []string{upstream.URL, "FW_MIN_RELEASE_AGE_DAYS=14", "set FW_MIN_RELEASE_AGE_DAYS=0", "REFUSED, by design"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the warning does not name %q, so it does not tell the operator what to do:\n%s", want, out)
 		}

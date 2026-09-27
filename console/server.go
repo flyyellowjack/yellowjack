@@ -542,6 +542,10 @@ type eventRow struct {
 	// its job on this screen is to make two rows decided under DIFFERENT policies
 	// visibly different, not to be read as a value.
 	PolicyDigest string
+	// Version is the release the verdict concerned (D363), shown beside the package.
+	// Empty on a package-level verdict, and when the package identity already ends in
+	// it (an OCI "repo:tag"), where repeating it would say nothing.
+	Version string
 }
 
 // handleAudit renders the read-only audit view: the firewall's recent allow/block
@@ -600,6 +604,7 @@ func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
 			Rule:         e.Rule,
 			Source:       e.Source,
 			Served:       e.Action == "block" && e.Taken == "allow",
+			Version:      versionBesidePackage(e.Package, e.Version),
 		}
 		if e.Score != nil {
 			row.Score = fmt.Sprintf("%.1f", *e.Score)
@@ -1033,7 +1038,7 @@ func overrideNotice(verdict, pkg string) url.Values {
 		return q
 	}
 	q.Set("notice", fmt.Sprintf("Denied %s. The gate refuses it on every path from now on -- including a package "+
-		"its own policy would allow (D272). One limit worth knowing: this ruling lives in the approval service, "+
+		"its own policy would allow. One limit worth knowing: this ruling lives in the approval service, "+
 		"and a gate that cannot reach that service falls back to policy. Put %s on the deny list for a block that "+
 		"survives an approval outage.", pkg, pkg))
 	return q
@@ -1052,4 +1057,14 @@ func sameOrigin(r *http.Request) bool {
 		return false
 	}
 	return u.Host == r.Host
+}
+
+// versionBesidePackage is the version to show beside a package name on the audit row:
+// the recorded one, unless the name already ends in it. An OCI identity is "repo:tag"
+// or "repo@digest", so its version is already on screen.
+func versionBesidePackage(pkg, version string) string {
+	if version == "" || strings.HasSuffix(pkg, ":"+version) || strings.HasSuffix(pkg, "@"+version) {
+		return ""
+	}
+	return version
 }

@@ -40,6 +40,38 @@ it, so pair it with egress rules if that must not happen.
 
 ## Quick start
 
+**On Kubernetes.** The Helm chart installs an npm gate, the control plane, the console and
+an evaluation Postgres. Each release publishes the chart and its images (FIPS 140-3 builds,
+amd64 and arm64), with the chart pinned to the images by digest ([docs/RELEASING.md](docs/RELEASING.md)):
+
+```bash
+helm install yj oci://ghcr.io/flyyellowjack/charts/yellowjack --version 0.1.0 --wait
+```
+
+To build from source instead, build the images from this repository, push them to a
+registry your cluster can pull from, and install the chart in
+[deploy/helm/yellowjack](deploy/helm/yellowjack/values.yaml):
+
+```bash
+REG=registry.example.com/yj          # your registry
+docker build -t $REG/yellowjack/firewall:dev -f Dockerfile .
+docker build -t $REG/yellowjack/approval:dev -f approval/Dockerfile .
+docker build -t $REG/yellowjack/console:dev  -f console/Dockerfile .
+for i in firewall approval console; do docker push $REG/yellowjack/$i:dev; done
+
+helm install yj deploy/helm/yellowjack \
+  --set images.firewall.repository=$REG/yellowjack/firewall \
+  --set images.approval.repository=$REG/yellowjack/approval \
+  --set images.console.repository=$REG/yellowjack/console \
+  --wait
+```
+
+The install prints the gate's address. Point a client at it
+(`npm config set registry http://yj-yellowjack-gate-npm:8080` from inside the cluster).
+Before production, read the three items at the top of
+[values.yaml](deploy/helm/yellowjack/values.yaml): your own upstream registry and public URL,
+your own database, and pinning images by digest.
+
 **See it refuse something in about a minute:** [QUICKSTART.md](QUICKSTART.md). One binary, one
 deny list, no account and no database.
 
@@ -63,7 +95,7 @@ go build -o yellowjack .    # the gate
 - **[docs/CONFIG_SURFACE.md](docs/CONFIG_SURFACE.md)**: where settings come from, and what can never influence them.
 - **[docs/MODE_MATRIX.md](docs/MODE_MATRIX.md)**: what each combination of modes does.
 - **[docs/CLIENT_TRUST.md](docs/CLIENT_TRUST.md)**: making clients trust a private CA.
-- **[docs/TEST_TIERS.md](docs/TEST_TIERS.md)** and **[docs/E2E_TESTING.md](docs/E2E_TESTING.md)**: how the tests are organised and run.
+- **[docs/TEST_TIERS.md](docs/TEST_TIERS.md)** and **[docs/E2E_TESTING.md](docs/E2E_TESTING.md)**: how the tests are organised, what runs where and when, and how to run the real-client suite yourself.
 - **[SECURITY.md](SECURITY.md)**: how to report a vulnerability.
 - **[CHANGELOG.md](CHANGELOG.md)**: what has shipped.
 

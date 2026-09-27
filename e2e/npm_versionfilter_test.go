@@ -299,3 +299,34 @@ func TestNpmPinnedAdvisorySteersResolutionToTheCompliantVersion(t *testing.T) {
 		}
 	})
 }
+
+// D367 through a real client: a BARE package name on the operator's allow list outranks a
+// version-pinned advisory for every release, so npm is offered, and installs, the release
+// the advisory names. The control is the test above, which runs the same registry and feed
+// with no allow list and is steered to the clean sibling. Each pull is logged as an
+// override, which is the half of D367 that keeps "the admin is always right" from being a
+// silent bypass.
+func TestNpmBareNameAllowInstallsTheReleaseAnAdvisoryNames(t *testing.T) {
+	bin := buildFirewall(t)
+	reg := startTwoVersionRegistry(t, nil)
+	vol := feedVolume(t)
+	script := "printf '%s\n' " + shellQuote(vfPkg) + " > " + vfFeedDir + "/allow.txt"
+	if out, err := exec.Command("docker", "run", "--rm", "-v", vol+":"+vfFeedDir, "busybox", "sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("write allow list: %v\n%s", err, out)
+	}
+	env := vfEnv(reg, true)
+	env["FW_ALLOW_LIST"] = vfFeedDir + "/allow.txt"
+	fw := startFirewallWithMounts(t, bin, env, []string{vol + ":" + vfFeedDir + ":ro"})
+	defer fw.stop()
+
+	code, out := npmInstallResolving(t, fw.port, vfPkg+"@"+vfPoisoned)
+	if code != 0 || !strings.Contains(out, "RESOLVED="+vfPoisoned) {
+		t.Fatalf("npm did not install %s@%s through a bare-name allow (exit %d); D367 says the allow "+
+			"outranks the advisory\n%s\n--- firewall ---\n%s", vfPkg, vfPoisoned, code, tail(out, 25),
+			logAround(fw.log.String(), 30, "known-malware", "override"))
+	}
+	if !strings.Contains(fw.log.String(), "[administrator-override]") || !strings.Contains(fw.log.String(), vfAdvisory) {
+		t.Errorf("the release was served over the advisory without an override line naming it:\n%s",
+			tail(fw.log.String(), 40))
+	}
+}

@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"yellowjack/fipsmode"
 )
 
 // The approval service is Yellow Jack's stateful control plane: a separate
@@ -28,9 +30,11 @@ func main() {
 		}
 		st = pg
 		log.Printf("Yellow Jack approval service: storage=postgres")
+		log.Printf("  %s", fipsmode.Line())
 	} else {
 		st = newMemStore()
 		log.Printf("Yellow Jack approval service: storage=in-memory (set APPROVAL_DATABASE_URL to persist)")
+		log.Printf("  %s", fipsmode.Line())
 	}
 
 	// APPROVAL_UPSTREAM_ECOSYSTEM names which protocol to speak; empty (the default)
@@ -469,8 +473,9 @@ func (srv *server) listEvents(w http.ResponseWriter, r *http.Request) {
 //
 // The schema is PROVISIONAL (version=0) and this comment is maintained rather than
 // left to rot, because a contract sentence that quietly stops being true is worse
-// than one that never was. It carries: package, ecosystem, action, score, reason,
-// source_ip, at, threshold, policy_digest.
+// than one that never was. It carries every AuditEvent field (store.go), among them
+// package, version, ecosystem, action, score, reason, source_ip, at, threshold and
+// policy_digest.
 //
 // threshold and policy_digest are #28's "the inputs that produced it", added because
 // score+reason alone are not reproducible — a reader months later cannot tell whether
@@ -479,9 +484,11 @@ func (srv *server) listEvents(w http.ResponseWriter, r *http.Request) {
 //
 // STILL MISSING from #28's list, so this must not be presented as a completed
 // compliance artifact:
-//   - the resolved VERSION. Only some ecosystems put it in the request identity (OCI
-//     does, an npm packument request does not), so it is not a field that can simply
-//     be added — it needs a per-ecosystem answer.
+//   - the resolved version of a PACKAGE-LEVEL verdict. Since D363 `version` is set
+//     whenever the request named a release (an npm tarball, a PyPI file, a Maven
+//     artifact, an OCI tag or digest). An npm packument or a PyPI index names no single
+//     release, so its record has none, and which release the client then installed is
+//     decided on the byte path, whose allows are not recorded.
 //   - cache-served. D151 removed the cache from scope permanently, so unless the
 //     integration with the customer's registry surfaces it, this one has no source
 //     and should be dropped from #28 rather than left looking outstanding.

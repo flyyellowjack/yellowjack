@@ -14,10 +14,16 @@ RUN go mod download
 
 # Copy only the cache package's source — it doesn't import the firewall code.
 COPY cache/ ./cache/
+# The one-line FIPS banner every service prints (D374); shared, so the six stay identical.
+COPY fipsmode/ ./fipsmode/
 
 # Static, CGO-free binary for a minimal runtime image (same rationale as the
 # firewall and approval images). Build the ./cache package specifically.
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /cache ./cache
+# FIPS 140-3 (D374): build against the certified Go Cryptographic Module. Setting it also
+# makes the binary start in FIPS mode (GODEBUG fips140=on). The startup banner says which.
+# Build with --build-arg GOFIPS140=off only to compare; the published images keep it on.
+ARG GOFIPS140=v1.0.0
+RUN GOFIPS140=$GOFIPS140 CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /cache ./cache
 
 # ---- Stage 2: runtime --------------------------------------------------------
 # distroless/static for CA certs and a tiny attack surface; :nonroot drops privileges.

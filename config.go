@@ -375,6 +375,13 @@ type Config struct {
 	// place it installs to, which the existing re-read then picks up).
 	MalwareFeedURL string
 
+	// MalwareFeedAuthFile is an absolute path to a file holding the Authorization header
+	// value the feed pull sends (D366: the curated feed is a subscription, reached with a
+	// key). Re-read like UpstreamAuthFile, so a rotated key needs no restart. Sent ONLY on
+	// the feed pull: the feed client is built without the registry credential wrapper, and
+	// this key is not given to the registry client either. Empty = no key, as before.
+	MalwareFeedAuthFile string
+
 	// AllowListPath / DenyListPath point at the OPERATOR's own lists: one package name
 	// per line, '#' comments, absolute path (D193, issue #58).
 	//
@@ -613,16 +620,17 @@ func loadConfig() (Config, error) {
 		// Default fail-CLOSED on a durably unverified repo (D36 Ruling A). This
 		// CHANGES D33's shipped behavior, which degraded open on a missing deps.dev
 		// record — the brand-new-package (fresh typosquat) borrow path.
-		UnverifiedPolicy:  c.enum("FW_UNVERIFIED_POLICY", unverifiedPolicyClosed, unverifiedPolicyClosed, unverifiedPolicyOpen),
-		DepsDevBase:       c.str("FW_DEPSDEV_BASE", depsDevBaseURL),
-		MaxReleaseAgeDays: c.integer("FW_MAX_RELEASE_AGE_DAYS", 0, 0),
-		MinReleaseAgeDays: c.integer("FW_MIN_RELEASE_AGE_DAYS", defaultCooldownDays(ecosystem), 0),
-		MalwareListPath:   c.str("FW_MALWARE_LIST", ""),
-		MalwareFeedKey:    c.str("FW_MALWARE_FEED_KEY", ""),
-		MalwareFeedURL:    c.str("FW_MALWARE_FEED_URL", ""),
-		AllowListPath:     c.str("FW_ALLOW_LIST", ""),
-		DenyListPath:      c.str("FW_DENY_LIST", ""),
-		MaxConnsPerHost:   c.integer("FW_MAX_CONNS_PER_HOST", defaultMaxConnsPerHost, 0),
+		UnverifiedPolicy:    c.enum("FW_UNVERIFIED_POLICY", unverifiedPolicyClosed, unverifiedPolicyClosed, unverifiedPolicyOpen),
+		DepsDevBase:         c.str("FW_DEPSDEV_BASE", depsDevBaseURL),
+		MaxReleaseAgeDays:   c.integer("FW_MAX_RELEASE_AGE_DAYS", 0, 0),
+		MinReleaseAgeDays:   c.integer("FW_MIN_RELEASE_AGE_DAYS", defaultCooldownDays(ecosystem), 0),
+		MalwareListPath:     c.str("FW_MALWARE_LIST", ""),
+		MalwareFeedKey:      c.str("FW_MALWARE_FEED_KEY", ""),
+		MalwareFeedURL:      c.str("FW_MALWARE_FEED_URL", ""),
+		MalwareFeedAuthFile: c.str("FW_MALWARE_FEED_AUTH_FILE", ""),
+		AllowListPath:       c.str("FW_ALLOW_LIST", ""),
+		DenyListPath:        c.str("FW_DENY_LIST", ""),
+		MaxConnsPerHost:     c.integer("FW_MAX_CONNS_PER_HOST", defaultMaxConnsPerHost, 0),
 		// Default VISIBILITY-first, enforcement opt-in (D49). See the field
 		// comment for the consequence this default deliberately accepts.
 		ByteGate: c.enum("FW_BYTE_GATE", byteGateAllowButLog, byteGateAllowButLog, byteGateEnforce, byteGateOff),
@@ -666,6 +674,19 @@ func loadConfig() (Config, error) {
 			"FW_UPSTREAM_AUTH_FILE=%q must be an absolute path: a relative path resolves "+
 				"against the working directory, so the credential is chosen by wherever the "+
 				"process was launched rather than by the operator", cfg.UpstreamAuthFile))
+	}
+	// The feed access key (D366) is absolute for the same reason, and means nothing without
+	// a feed to pull: a key with no URL is refused rather than silently unused.
+	if cfg.MalwareFeedAuthFile != "" && !filepath.IsAbs(cfg.MalwareFeedAuthFile) {
+		c.problems = append(c.problems, fmt.Sprintf(
+			"FW_MALWARE_FEED_AUTH_FILE=%q must be an absolute path: a relative path resolves "+
+				"against the working directory, so the key is chosen by wherever the process was "+
+				"launched rather than by the operator", cfg.MalwareFeedAuthFile))
+	}
+	if cfg.MalwareFeedAuthFile != "" && cfg.MalwareFeedURL == "" {
+		c.problems = append(c.problems,
+			"FW_MALWARE_FEED_AUTH_FILE is set but FW_MALWARE_FEED_URL is not: the key is only ever "+
+				"sent on the feed pull, so with no feed to pull it does nothing")
 	}
 	// TLS interception (increment 7): the two knobs are a pair, the file is absolute for
 	// the same reason FW_UPSTREAM_AUTH_FILE is — it holds a SIGNING KEY, so a CWD-relative
@@ -995,13 +1016,30 @@ func stubScoringNotice(cfg Config) string {
 	if cfg.ScorecardMode != "stub" {
 		return ""
 	}
-	effect := fmt.Sprintf("at or above your threshold of %.1f, so the score rule ALLOWS EVERY PACKAGE and the only "+
-		"enforcement left is the operator lists and the known-malware feed", cfg.ScoreThreshold)
+	// "Every package" is every package the gate can SCORE. A package whose source repository
+	// cannot be determined is never scored at all -- it takes the unscorable path, and the
+	// default FW_UNSCORABLE_POLICY=block refuses it. The first version of this line said the
+	// only enforcement left was the lists and the feed; E123 (intel, 2026-09-27) resolved real
+	// dependency trees through a gate at these defaults and found repo-less packages refused
+	// as unscorable, which that sentence told the operator could not happen.
+	// Asks the SAME function the verdict path asks (policy.go), so the sentence cannot drift
+	// from the gate: only "block" refuses, and an unset value means allow there.
+	unscorable := fmt.Sprintf("served (FW_UNSCORABLE_POLICY=%q)", cfg.UnscorablePolicy)
+	if unscorableAction(cfg.UnscorablePolicy) == ActionReject {
+		unscorable = "REFUSED (FW_UNSCORABLE_POLICY=block)"
+	}
+	// "Cannot trace to a GitHub repository" is exact, not a simplification: normalizeGitHub
+	// refuses every other forge, so a package declaring a GitLab, Codeberg or self-hosted
+	// repository is unscorable too (E123 met @codemirror/*, hosted on its author's own forge).
+	effect := fmt.Sprintf("at or above your threshold of %.1f, so the score rule ALLOWS EVERY PACKAGE IT CAN SCORE. "+
+		"A package it cannot trace to a GitHub repository (none declared, or one hosted elsewhere) is not scored "+
+		"at all and is %s; beyond that, the enforcement left is the operator lists and the known-malware feed",
+		cfg.ScoreThreshold, unscorable)
 	if stubScore < cfg.ScoreThreshold {
 		effect = fmt.Sprintf("below your threshold of %.1f, so the score rule REFUSES EVERY PACKAGE", cfg.ScoreThreshold)
 	}
-	return fmt.Sprintf("stub scoring: every package is scored %.1f, %s. Stub is for tests and demos; "+
-		"set FW_SCORECARD_MODE=api or local to score packages for real.", stubScore, effect)
+	return fmt.Sprintf("stub scoring: every package with a GitHub repository is scored %.1f, %s. Stub is for tests and demos; "+
+		"set FW_SCORECARD_MODE=api or local to score packages for real, or off to not score at all.", stubScore, effect)
 }
 
 // scoreThresholdMax is the top of the OpenSSF Scorecard scale. A threshold above

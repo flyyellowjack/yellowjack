@@ -46,8 +46,12 @@ func TestHealthyBootIsQuiet(t *testing.T) {
 			// score as real scoring. The line is deliberately NOT a "WARNING:": every rig here
 			// runs stub on purpose, and a severity token would make this very test's healthy
 			// boot noisy -- the failure #19 exists to prevent.
+			//
+			// These literals are checked against the real banner on every push by
+			// TestTheE2EBannerAssertionsMatchTheBanner (stubnotice_test.go): this leg runs only
+			// nightly, and a rewording of the banner once broke it for a day unseen.
 			boot := fw.log.String()
-			if !strings.Contains(boot, "stub scoring: every package is scored") ||
+			if !strings.Contains(boot, "stub scoring: every package") ||
 				!strings.Contains(boot, "ALLOWS EVERY PACKAGE") {
 				t.Errorf("a %s boot in stub mode did not state what stub scoring does to this "+
 					"threshold; the banner is where an operator learns the score rule is inert:\n%s",

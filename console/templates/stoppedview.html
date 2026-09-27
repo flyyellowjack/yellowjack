@@ -98,7 +98,7 @@
       <section class="card panel override" aria-labelledby="ov">
         <h2 id="ov" style="font-size:15px">Administrator override</h2>
         {{ if eq .Override "pin" }}
-          <p class="fine">You can allow one release anyway by pinning it on the allow list. A pinned release outranks the advisory for that release only (D312). The change is a commit in the lists&rsquo; history, under your name.</p>
+          <p class="fine">You can allow one release anyway by pinning it on the allow list. A pinned release outranks the advisory for that release only. The change is a commit in the lists&rsquo; history, under your name.</p>
           {{ if .CanEditList }}
           <form method="post" action="/lists">
             <input type="hidden" name="kind" value="allow">

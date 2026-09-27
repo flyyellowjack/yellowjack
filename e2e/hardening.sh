@@ -954,9 +954,16 @@ for f in $(git ls-files 'docker-compose*.yml'); do
       # by e2e/async_local.sh alone and is never part of a shipped deployment. The same
       # mount appearing in docker-compose.yml would be a real regression of the #22 claim,
       # so the file is part of the condition, not just the path.
+      #
+      # docker-compose.demo.yml is the second file with the same need and the same scope: the
+      # laptop demo (docs/DEMO.md, scripts/demo.sh) edits the lists from the console, and the
+      # gate reads them back from the host. It is layered by scripts/demo.sh alone and is no
+      # more a deployment than the async override. The nightly of 2026-09-25 went red on it
+      # because the exception named only the async file.
       *)
         case "$f:$line" in
-          docker-compose.asyncfake.yml:*/srv/lists*|docker-compose.asyncfake.yml:*/srv/lists-remote*)
+          docker-compose.asyncfake.yml:*/srv/lists*|docker-compose.asyncfake.yml:*/srv/lists-remote*|\
+          docker-compose.demo.yml:*/srv/lists*)
             listmounts=$((listmounts + 1)); continue ;;
         esac
         printf 'FAIL: %s mounts a host path READ-WRITE: %s\n' "$f" "$(echo "$line" | tr -d ' -')"

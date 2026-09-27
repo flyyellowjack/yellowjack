@@ -186,7 +186,7 @@ func (f *Firewall) verifyRepo(pkg, selfRepo string) (string, Decision, bool) {
 		}
 		reason := fmt.Sprintf("self-declared repo %q for %q cannot be verified: deps.dev has no %s index, so no image's source repo can be cross-checked",
 			selfRepo, pkg, f.cfg.Ecosystem)
-		log.Printf("SECURITY evaluate %q: %s (failing closed per D48; set FW_UNVERIFIED_POLICY=%s to proceed on the self-declared repo with a log instead)",
+		log.Printf("SECURITY evaluate %q: %s (failing closed; set FW_UNVERIFIED_POLICY=%s to proceed on the self-declared repo with a log instead)",
 			pkg, reason, unverifiedPolicyOpen)
 		return "", f.unverified(pkg, reason), true
 	}

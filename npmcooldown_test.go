@@ -14,7 +14,7 @@ import (
 func TestNpmWindowRefuserHoldsOnlyWhatTheWindowSays(t *testing.T) {
 	now := time.Now()
 	w := ageWindow{
-		tooNewAfter: now.AddDate(0, 0, -7), tooNewReason: "within the 7-day cooldown",
+		tooNewAfter: now.AddDate(0, 0, -7), tooNewReason: "within the 7-day cooldown", minDays: 7,
 		tooOldBefore: now.AddDate(0, 0, -365), tooOldReason: "older than the floor",
 	}
 	refuse := npmWindowRefuser(w)
@@ -25,7 +25,7 @@ func TestNpmWindowRefuserHoldsOnlyWhatTheWindowSays(t *testing.T) {
 	}{
 		{"ancient", npmVersionFacts{Version: "1.0.0", Published: now.AddDate(0, 0, -400), HasTime: true, InPackument: true}, "older than the floor"},
 		{"comfortably in the middle", npmVersionFacts{Version: "2.0.0", Published: now.AddDate(0, 0, -30), HasTime: true, InPackument: true}, ""},
-		{"published yesterday", npmVersionFacts{Version: "3.0.0", Published: now.AddDate(0, 0, -1), HasTime: true, InPackument: true}, "within the 7-day cooldown"},
+		{"published yesterday", npmVersionFacts{Version: "3.0.0", Published: now.AddDate(0, 0, -1), HasTime: true, InPackument: true}, "within the 7-day cooldown; it clears " + now.AddDate(0, 0, -1).UTC().AddDate(0, 0, 7).Format(npmClearsFormat)},
 		{"no publish time: fails closed while a window is active (D100)", npmVersionFacts{Version: "4.0.0", InPackument: true}, "release age could not be verified"},
 		{"a version document is not judged by the window", npmVersionFacts{Version: "3.0.0", Published: now.AddDate(0, 0, -1), HasTime: true}, ""},
 	} {

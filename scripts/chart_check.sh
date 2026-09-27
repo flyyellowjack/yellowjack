@@ -11,6 +11,11 @@
 #      mirror registry prefix on EVERY image, the bundle and the policy off. The
 #      two-gate render is load-bearing on its own: a single-gate render never showed
 #      the `{{- end }}` that glued the second gate's `---` onto the first Service.
+#   3b/3c. A MINIMAL gate renders and still gets gateDefaults (scoring `off`, so it can
+#      pass /readyz); a gate's own env wins over gateDefaults key by key.
+#   3d. Every gate with 2+ replicas gets a PodDisruptionBudget and a soft node spread
+#      (D358: "do you have an HA deployment mode?"); a 1-replica gate gets neither, and
+#      each can be switched off.
 #   4. Five half-configured inputs are REFUSED at render time, each with the message
 #      an operator can act on. A chart that installs a stack with no gate, or approval
 #      with no database, and lets the operator find out from a crash loop is the shape
@@ -65,6 +70,15 @@ if render "$TMP/default.yaml"; then
   # process health only, D163). Counted per gate so a second gate cannot fall back to
   # /healthz unnoticed; the override below renders two.
   [ "$(grep -A2 'readinessProbe:' "$d" | grep -c 'path: /readyz')" = 1 ] && grep -A2 'livenessProbe:' "$d" | grep -q 'path: /healthz' && ok "default: the gate's readiness probe is /readyz and its liveness /healthz (D165)" || bad "default: gate probes are not /readyz (readiness) + /healthz (liveness): $(grep -A2 -E '(readiness|liveness)Probe:' "$d" | grep 'path:' | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+  # D358: "do you have an HA deployment mode?" The default gate runs 2 replicas, so it gets
+  # a disruption budget (a drain evicts one at a time) and a SOFT node spread (a node loss
+  # leaves one serving; a one-node cluster still schedules both).
+  [ "$(count_kind "$d" PodDisruptionBudget)" = 1 ] && grep -A12 '^kind: PodDisruptionBudget$' "$d" | grep -q 'maxUnavailable: 1' && grep -A12 '^kind: PodDisruptionBudget$' "$d" | grep -q 'yellowjack.io/gate: "npm"' \
+    && ok "default: the 2-replica gate has a PodDisruptionBudget (maxUnavailable 1) selecting that gate" \
+    || bad "default: PodDisruptionBudgets = $(count_kind "$d" PodDisruptionBudget), want 1 with maxUnavailable 1 selecting the npm gate"
+  grep -A3 'topologySpreadConstraints:' "$d" | grep -q 'topologyKey: kubernetes.io/hostname' && grep -A4 'topologySpreadConstraints:' "$d" | grep -q 'whenUnsatisfiable: ScheduleAnyway' \
+    && ok "default: gate replicas prefer separate nodes, softly (ScheduleAnyway), so a one-node cluster still schedules" \
+    || bad "default: no soft per-node topology spread on the gate"
 else
   bad "default values do not render: $(tail -3 "$TMP/default.yaml.err")"
 fi
@@ -93,6 +107,9 @@ if render "$TMP/prod.yaml.out" -f "$TMP/prod.yaml"; then
   grep -q 'value: "oci"' "$p" && ok "override: the second gate speaks oci" || bad "override: no oci gate rendered"
   [ "$(grep -A2 'readinessProbe:' "$p" | grep -c 'path: /readyz')" = 2 ] && ok "override: BOTH gates probe readiness on /readyz (D165)" || bad "override: /readyz readiness probes = $(grep -A2 'readinessProbe:' "$p" | grep -c 'path: /readyz'), want 2 (one per gate)"
   grep -q 'name: my-db-secret' "$p" && grep -q 'name: my-console-secret' "$p" && ok "override: existing secrets referenced, not copied" || bad "override: existingSecret references missing"
+  [ "$(count_kind "$p" PodDisruptionBudget)" = 2 ] && [ "$(grep -c 'topologySpreadConstraints:' "$p")" = 2 ] \
+    && ok "override: BOTH gates get their own disruption budget and node spread" \
+    || bad "override: PodDisruptionBudgets = $(count_kind "$p" PodDisruptionBudget), spreads = $(grep -c 'topologySpreadConstraints:' "$p"), want 2 each (one per gate)"
 else
   bad "the production override does not render: $(tail -3 "$TMP/prod.yaml.out.err")"
 fi
@@ -114,8 +131,64 @@ if render "$TMP/min.yaml.out" -f "$TMP/min.yaml"; then
   m="$TMP/min.yaml.out"
   [ "$(count_kind "$m" Deployment)" = 1 ] && [ "$(count_kind "$m" Service)" = 1 ] && [ "$(count_kind "$m" ConfigMap)" = 1 ]     && ok "minimal gate: renders one Deployment, one Service, one ConfigMap with no optional block set"     || bad "minimal gate: rendered [$(kinds "$m")], want 1 Deployment + 1 Service + 1 ConfigMap"
   grep -qE '^\s+port: 8080$' "$m" && grep -qE '^\s+type: ClusterIP$' "$m" && ok "minimal gate: service defaults to ClusterIP on 8080" || bad "minimal gate: service defaults missing"
+  # A gate with no env block must still get gateDefaults. Without FW_SCORECARD_MODE=off the
+  # binary falls back to stub and /readyz refuses stub forever, so a gate that RENDERS can
+  # still never become ready -- found on kind by writing a gates entry with no env.
+  grep -A1 -E '^\s+- name: FW_SCORECARD_MODE$' "$m" | grep -qE '^\s+value: "off"$' \
+    && ok "minimal gate: inherits FW_SCORECARD_MODE=off from gateDefaults, so it can become ready" \
+    || bad "minimal gate: no FW_SCORECARD_MODE=off in the render -- the gate would fall back to stub and never pass /readyz"
 else
   bad "a minimal gate (no service/lists block) does not render: $(grep -o 'Error: .*' "$TMP/min.yaml.out.err" | cut -c1-160)"
+fi
+
+# ── 3c. a gate's own env wins over gateDefaults, key by key ─────────────────
+printf 'gates:
+  - name: o
+    ecosystem: npm
+    upstream: http://u
+    env:
+      FW_SCORECARD_MODE: api
+approval: { enabled: false }
+postgres: { enabled: false }
+console: { enabled: false }
+' > "$TMP/over.yaml"
+if render "$TMP/over.yaml.out" -f "$TMP/over.yaml"; then
+  o="$TMP/over.yaml.out"
+  [ "$(grep -cE '^\s+- name: FW_SCORECARD_MODE$' "$o")" = 1 ] \
+    && grep -A1 -E '^\s+- name: FW_SCORECARD_MODE$' "$o" | grep -qE '^\s+value: "api"$' \
+    && ok "override: the gate's FW_SCORECARD_MODE=api wins, rendered once" \
+    || bad "override: the gate's own FW_SCORECARD_MODE did not win over gateDefaults (or rendered twice)"
+  grep -A1 -E '^\s+- name: FW_SCORE_THRESHOLD$' "$o" | grep -qE '^\s+value: "0.0"$' \
+    && ok "override: keys the gate does not set still come from gateDefaults" \
+    || bad "override: FW_SCORE_THRESHOLD from gateDefaults is missing once the gate sets any env"
+else
+  bad "a gate with its own env does not render: $(grep -o 'Error: .*' "$TMP/over.yaml.out.err" | cut -c1-160)"
+fi
+
+# ── 3d. one replica gets neither; the operator can turn each off ─────────────
+# A budget on one replica can only block a drain or do nothing, and a spread of one pod
+# spreads nothing, so neither renders there. Each switch must actually switch.
+printf 'gates:
+  - { name: one, ecosystem: npm, upstream: http://u, replicas: 1 }
+  - { name: two, ecosystem: npm, upstream: http://u, replicas: 2 }
+approval: { enabled: false }
+postgres: { enabled: false }
+console: { enabled: false }
+' > "$TMP/ha.yaml"
+if render "$TMP/ha.out" -f "$TMP/ha.yaml"; then
+  [ "$(count_kind "$TMP/ha.out" PodDisruptionBudget)" = 1 ] && [ "$(grep -c 'topologySpreadConstraints:' "$TMP/ha.out")" = 1 ] \
+    && grep -A12 '^kind: PodDisruptionBudget$' "$TMP/ha.out" | grep -q 'yellowjack.io/gate: "two"' \
+    && ok "ha: a 1-replica gate gets no budget and no spread; its 2-replica neighbour gets both" \
+    || bad "ha: with replicas 1 and 2, want 1 budget (for \"two\") and 1 spread, got $(count_kind "$TMP/ha.out" PodDisruptionBudget) and $(grep -c 'topologySpreadConstraints:' "$TMP/ha.out")"
+else
+  bad "the replicas 1/2 render failed: $(grep -o 'Error: .*' "$TMP/ha.out.err" | cut -c1-160)"
+fi
+if render "$TMP/haoff.out" -f "$TMP/ha.yaml" --set gateAvailability.podDisruptionBudget=false --set gateAvailability.spreadAcrossNodes=false; then
+  [ "$(count_kind "$TMP/haoff.out" PodDisruptionBudget)" = 0 ] && [ "$(grep -c 'topologySpreadConstraints:' "$TMP/haoff.out")" = 0 ] \
+    && ok "ha: both switches turn their piece off" \
+    || bad "ha: switched off, still rendered $(count_kind "$TMP/haoff.out" PodDisruptionBudget) budget(s) and $(grep -c 'topologySpreadConstraints:' "$TMP/haoff.out") spread(s)"
+else
+  bad "the switched-off render failed: $(grep -o 'Error: .*' "$TMP/haoff.out.err" | cut -c1-160)"
 fi
 
 # ── 4. half-configured inputs are refused, each with an actionable message ───

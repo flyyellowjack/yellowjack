@@ -2,6 +2,12 @@ package main
 
 import (
 	"log"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"yellowjack/fipsmode"
 )
 
 // interception is a configured TLS-interception listener: the banner line that names
@@ -42,6 +48,7 @@ func main() {
 	}
 
 	log.Printf("Yellow Jack starting on %s", cfg.ListenAddr)
+	log.Printf("  %s", fipsmode.Line())
 	// The compiled policy, beside the settings that produced it. Logged here rather
 	// than in newProxyServer (where it was first written): that constructor runs once
 	// in production but once per case in the tests, so a line there floods every run.
@@ -91,7 +98,7 @@ func main() {
 		// default that refuses every image that declares a source repo (D48, #33),
 		// which an operator must never discover from the first failed pull.
 		if cfg.Ecosystem == "oci" && fw.unverifiedFailsClosed() {
-			log.Printf("  *** OCI + closed: deps.dev has no container index, so EVERY image that declares a source repo is refused as unverifiable (D48). Set FW_UNVERIFIED_POLICY=%s to proceed on the self-declared repo with a log instead.", unverifiedPolicyOpen)
+			log.Printf("  *** OCI + closed: deps.dev has no container index, so EVERY image that declares a source repo is refused as unverifiable. Set FW_UNVERIFIED_POLICY=%s to proceed on the self-declared repo with a log instead.", unverifiedPolicyOpen)
 		}
 		// The "unrecognized value" warning that stood here is gone: loadConfig now
 		// REFUSES an unrecognized FW_UNVERIFIED_POLICY outright (#19), so by this line
@@ -170,7 +177,14 @@ func main() {
 	// The cooperative listener, with the same three connection-lifetime bounds as the
 	// interception one (#130, cooperativeServer). It runs forever, handling each
 	// connection concurrently; srv's ServeHTTP is called per request.
-	if err := cooperativeServer(cfg.ListenAddr, srv).ListenAndServe(); err != nil {
+	// It drains on SIGTERM instead of dying mid-request (shutdown.go, #163).
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, os.Interrupt)
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		log.Fatalf("server failed: %v", err)
+	}
+	if err := serveUntilSignal(srv, cooperativeServer(cfg.ListenAddr, srv), ln, sigs); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
 }

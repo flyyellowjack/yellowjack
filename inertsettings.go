@@ -40,7 +40,7 @@ func (f *Firewall) inertSettingWarnings() []string {
 		} {
 			if k.days > 0 {
 				out = append(out, fmt.Sprintf("%s=%d is set but is NOT ENFORCED on this %s gate: there is no "+
-					"trustworthy release date to judge by (#127), so no pull will ever be held or refused by it. "+
+					"trustworthy release date to judge by, so no pull will ever be held or refused by it. "+
 					"Remove it from this gate's environment, or accept that it has no effect here.",
 					k.name, k.days, f.cfg.Ecosystem))
 			}

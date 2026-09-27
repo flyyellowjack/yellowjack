@@ -8,8 +8,16 @@
      service), so both default to an empty dict first. */}}
 {{- $svc := default dict $gate.service -}}
 {{- $lists := default dict $gate.lists -}}
+{{/* gateDefaults.env sits UNDER every gate's own env, so a gate that sets a key wins and a
+     gate that omits it still gets the chart default. It cannot live in the default gates[0]
+     entry: Helm replaces a list whole, so an operator who writes their own gates entry to
+     change the upstream would silently drop it -- and without FW_SCORECARD_MODE=off the
+     gate falls back to stub, which /readyz refuses forever (found installing on kind). */}}
+{{- $env := merge (deepCopy (default dict $gate.env)) (deepCopy (default dict $root.Values.gateDefaults.env)) -}}
 {{- $port := int (default 8080 $svc.port) -}}
 {{- $publicURL := default (printf "http://%s:%d" $name $port) $gate.publicURL -}}
+{{- $replicas := int (default 2 $gate.replicas) -}}
+{{- $avail := default dict $root.Values.gateAvailability -}}
 ---
 # One ConfigMap per gate, mounted as a DIRECTORY. A ConfigMap volume updates in place
 # (atomic symlink swap), so a `helm upgrade` that edits a list reaches the running gate
@@ -41,7 +49,7 @@ metadata:
     app.kubernetes.io/component: gate
     yellowjack.io/gate: {{ $gate.name | quote }}
 spec:
-  replicas: {{ default 2 $gate.replicas }}
+  replicas: {{ $replicas }}
   # Replicas share NOTHING (no database, no volume, no coordination -- e2e/ha_drill.sh
   # legs 1-6), so a rolling update with one extra pod and none unavailable is a
   # zero-failed-request rollover, which is D133's acceptance criterion.
@@ -65,7 +73,7 @@ spec:
         # A list edit changes the ConfigMap in place, but a changed FW_* value only
         # reaches the pod on a restart; hashing the rendered env into the pod template
         # makes `helm upgrade` roll the gates exactly when something they read changed.
-        checksum/env: {{ $gate.env | toYaml | sha256sum }}
+        checksum/env: {{ $env | toYaml | sha256sum }}
     spec:
       {{- with $root.Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -99,7 +107,7 @@ spec:
             - name: FW_APPROVAL_URL
               value: {{ include "yellowjack.approval.url" $root | quote }}
             {{- end }}
-            {{- range $k, $v := $gate.env }}
+            {{- range $k, $v := $env }}
             - name: {{ $k }}
               value: {{ $v | toString | quote }}
             {{- end }}
@@ -142,6 +150,43 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if and (ne (toString $avail.spreadAcrossNodes) "false") (gt $replicas 1) }}
+      # Prefer one replica per node, so losing a node does not take the gate with it. SOFT
+      # (ScheduleAnyway): a single-node cluster still schedules every replica, it just
+      # cannot spread them. A hard constraint would leave replicas Pending there instead.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "yellowjack.selectorLabels" $root | nindent 14 }}
+              app.kubernetes.io/component: gate
+              yellowjack.io/gate: {{ $gate.name | quote }}
+      {{- end }}
+{{- if and (ne (toString $avail.podDisruptionBudget) "false") (gt $replicas 1) }}
+---
+# A node drain (cluster upgrade, node rotation) evicts pods through this budget, one gate
+# replica at a time, so there is always a replica serving while another reschedules.
+# maxUnavailable rather than minAvailable: it stays correct at any replica count and never
+# blocks a drain outright. Not rendered for one replica, where it could only block or do
+# nothing. It governs evictions only; the rolling update above has its own settings.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yellowjack.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: gate
+    yellowjack.io/gate: {{ $gate.name | quote }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "yellowjack.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: gate
+      yellowjack.io/gate: {{ $gate.name | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

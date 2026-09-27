@@ -132,7 +132,7 @@ func partialReportVerdict(repo string, sr scannerResponse, required map[string]b
 		// the floor against (an older scanner in a rolling deploy). Refusing is the
 		// pre-D271 behaviour, and the honest one: the floor cannot be checked.
 		return fmt.Errorf("scanner: partial report for %s: only %d of %d checks scored (%.1f) and the reply names no "+
-			"checks, so the required-check floor cannot be evaluated; treated as unscorable (#133)",
+			"checks, so the required-check floor cannot be evaluated; treated as unscorable",
 			repo, sr.ScoredChecks, sr.TotalChecks, sr.Score)
 	}
 	if missing := missingRequiredChecks(required, sr.Checks); len(missing) > 0 {

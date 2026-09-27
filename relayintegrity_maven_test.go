@@ -164,7 +164,7 @@ func TestMavenHeaderDigestReadsTheStrongestWellFormedChecksum(t *testing.T) {
 			for k, v := range c.hdr {
 				h.Set(k, v)
 			}
-			algo, want, ok := mavenHeaderDigest(h)
+			algo, want, ok := mavenHeaderDigest(h, true)
 			if c.algo == "" {
 				if ok {
 					t.Errorf("treated as verifiable (%s:%s) — %s", algo, want, c.why)
@@ -200,5 +200,26 @@ func TestVerifiableTransferExcludesAContentEncodedBody(t *testing.T) {
 		if got := verifiableTransfer(r, resp); got != c.want {
 			t.Errorf("Content-Encoding %q: verifiableTransfer = %v, want %v", c.ce, got, c.want)
 		}
+	}
+}
+
+// Under FIPS 140-only mode computing SHA-1 panics, so a SHA-1 header must read as "no
+// checksum we may compute" -- never as a digest to check (D377). A SHA-256 header is
+// still checked, and the control shows the same header IS read when SHA-1 is allowed.
+func TestStrictFIPSNeverAsksForASHA1Check(t *testing.T) {
+	s1 := sha1Hex("jar bytes")
+	s256 := strings.Repeat("ab", 32)
+	only := http.Header{}
+	only.Set("X-Checksum-SHA1", s1)
+	if algo, _, ok := mavenHeaderDigest(only, false); ok {
+		t.Errorf("strict mode asked for a %s check: sha1.New would panic in the relay", algo)
+	}
+	if algo, want, ok := mavenHeaderDigest(only, true); !ok || algo != "sha1" || want != s1 {
+		t.Errorf("control: with SHA-1 allowed the same header gave (%q, %q, %v)", algo, want, ok)
+	}
+	both := only.Clone()
+	both.Set("X-Checksum-Sha256", s256)
+	if algo, want, ok := mavenHeaderDigest(both, false); !ok || algo != "sha256" || want != s256 {
+		t.Errorf("strict mode dropped the SHA-256 check too: (%q, %q, %v)", algo, want, ok)
 	}
 }

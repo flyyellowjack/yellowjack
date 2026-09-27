@@ -150,8 +150,12 @@ type AuditEvent struct {
 	// leaves no record on the exported log is indistinguishable from a gate that missed
 	// something.
 	Override string `json:"override,omitempty"`
-	Rule     string `json:"rule,omitempty"`
-	Source   string `json:"source,omitempty"`
+	// Version: the release the verdict concerned (D363), when the request named one (an
+	// npm tarball, a PyPI file, a Maven artifact, an OCI tag or digest). '' on a
+	// package-level verdict, such as an npm packument, and on rows written before it.
+	Version string `json:"version,omitempty"`
+	Rule    string `json:"rule,omitempty"`
+	Source  string `json:"source,omitempty"`
 	// The SECOND instance of the same drop, found by the guard written for the first
 	// (auditwire_test.go): #114 made a report-mode block machine-distinguishable from a
 	// real one on the wire -- action=block, taken=allow, mode=report -- and these two
